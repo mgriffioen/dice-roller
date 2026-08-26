@@ -181,6 +181,61 @@ for _, spec in ipairs(DiceTypes) do
     end
 end
 
+-- 7. The number on a die's face stays on the die ---------------------------
+-- The stub font reports 8px per character and 16px tall; the real system font
+-- differs, so these check proportions rather than exact pixels.
+local FONT_W, FONT_H = 8, 16
+
+local biggest = 0
+for _, spec in ipairs(DiceTypes) do
+    for _, mode in ipairs({ "normal", "advantage" }) do
+        for count = 1, spec.maxCount do
+            local c = config(spec, count, 0, mode)
+            local all, groups = Dice.build(c)
+            Layout.arrange(groups, 8, 28, 384, 164)
+            for _, d in ipairs(all) do
+                -- Worst-case face for this die: the widest label it can show.
+                d.value = spec.percentile and (d.role == "tens" and 90 or 9) or spec.sides
+                local label = d:label()
+                local scale = d:faceScale(label)
+                local textH, textW = FONT_H * scale, FONT_W * #label * scale
+                local name = Dice.notation(c) .. " " .. label
+
+                check(scale == 1 or scale == 2,
+                    name .. ": face scale " .. scale .. " -- triple size reads as a number " ..
+                    "with a die drawn round it")
+                check(textH <= d.size * 0.6,
+                    name .. ": number is " .. math.floor(textH / d.size * 100) ..
+                    "% of the die's height")
+                if scale > 1 then
+                    check(textW <= d.size * 0.62,
+                        name .. ": number is wider than the die can carry")
+                end
+                biggest = math.max(biggest, textH / d.size)
+            end
+        end
+    end
+end
+check(biggest < 0.6, "the largest number fills " .. math.floor(biggest * 100) .. "% of its die")
+
+-- The setup screen's preview die should look the same whichever type is shown:
+-- a number that jumps size as you scroll through the list reads as a bug.
+local previewScale = nil
+for _, spec in ipairs(DiceTypes) do
+    local d = Die(spec, spec.percentile and "tens" or "normal")
+    d.size = 76
+    d.value = spec.percentile and 90 or spec.sides
+    local scale = d:faceScale(d:label())
+    check(scale == 2, "preview " .. spec.key .. " should use double size, got " .. scale)
+    previewScale = previewScale or scale
+    check(scale == previewScale, "preview scale is inconsistent between die types")
+end
+
+-- Crowded handfuls fall back to the plain font rather than overflowing.
+local crowded = Die(DiceTypes[3])
+crowded.size = 40
+check(crowded:faceScale("6") == 1, "a small die should use the unscaled font")
+
 if failures == 0 then
     print("all dice checks passed")
 else

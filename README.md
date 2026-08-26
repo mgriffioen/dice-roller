@@ -129,6 +129,14 @@ number, render the string into an offscreen `gfx.image` once and blit it back
 with `image:drawScaled()` — see `Util.drawBigText`. Cache the images; making
 them every frame is wasteful.
 
+The catch is that this only scales in whole multiples — 16px or 32px, nothing
+between — because a fractional scale doubles some pixel rows and not others,
+which looks broken at this resolution. So `Die:faceScale` picks between exactly
+two sizes based on how big the die is, with a width check so a two-digit
+percentile face doesn't outgrow the die carrying it. Resist deriving that
+choice from per-shape geometry: it makes the size jump around between die types
+in ways that read as a bug.
+
 **One config table beats threading arguments.** A throw is described by
 `{ spec, count, modifier, mode }`, built on the setup screen and handed to the
 roll scene. Everything in `Dice` takes that one table, so adding the modifier and

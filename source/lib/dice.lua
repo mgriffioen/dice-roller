@@ -190,14 +190,33 @@ function Die:drawPolygonDie(cx, cy, r, squash)
     self:drawFace(cx, cy)
 end
 
-function Die:drawFace(cx, cy)
-    local scale = 1
-    if self.size >= 62 then
-        scale = 3
-    elseif self.size >= 38 then
-        scale = 2
+-- Below this size the number is drawn in the plain font; at or above it, at
+-- double size. Scaled bitmap text only comes in whole multiples -- a fractional
+-- scale doubles some pixel rows and not others, which looks broken at this
+-- resolution -- so this is one step rather than a smooth ramp.
+--
+-- Triple size does fit inside the bigger shapes, but it reads as a number with
+-- a die drawn around it rather than a die with a number on it.
+local DOUBLE_FACE_SIZE <const> = 58
+
+-- ...unless the number would end up wider than the die carrying it. A
+-- two-digit percentile face is nearly twice the width of a single digit, and
+-- the system font's exact metrics are not something to assume.
+local FACE_WIDTH_LIMIT <const> = 0.62
+
+function Die:faceScale(text)
+    if self.size < DOUBLE_FACE_SIZE then
+        return 1
     end
+    if gfx.getTextSize(text) * 2 > self.size * FACE_WIDTH_LIMIT then
+        return 1
+    end
+    return 2
+end
+
+function Die:drawFace(cx, cy)
     local text = self:label()
+    local scale = self:faceScale(text)
     local _, h = Util.bigTextSize(text, scale)
     Util.drawBigText(text, cx, cy - h / 2, scale, kTextAlignment.center)
 end
