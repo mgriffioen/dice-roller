@@ -16,11 +16,10 @@ local OVERLAY_FRAMES <const> = 10
 local PANEL_X <const>, PANEL_W <const> = 24, 352
 local PANEL_Y <const>, PANEL_H <const> = 40, 168
 
-function RollScene:enter(spec, count)
-    self.spec = spec
-    self.count = count
-    self.dice, self.groups = Dice.build(spec, count)
-    Layout.arrange(self.groups, spec, 8, 28, 384, 164)
+function RollScene:enter(config)
+    self.config = config
+    self.dice, self.groups = Dice.build(config)
+    Layout.arrange(self.groups, 8, 28, 384, 164)
     self:reset()
 end
 
@@ -37,8 +36,12 @@ function RollScene:reset()
     self.hintAngle = 0
     for _, die in ipairs(self.dice) do
         die.settled = false
+        die.dropped = false
         die.landFrames = 0
         die.angle = math.random() * 360
+    end
+    for _, group in ipairs(self.groups) do
+        group.marked = false
     end
 end
 
@@ -114,6 +117,9 @@ function RollScene:updateSettle()
             local die = self.dice[self.settleIndex]
             die:settle(die:randomValue())
             Sfx.land()
+            -- Cross out a discarded die as soon as its partner has landed,
+            -- rather than waiting for the whole handful.
+            Dice.markDropped(self.config, self.groups)
         end
         return
     end
@@ -138,26 +144,33 @@ function RollScene:updateResult()
 end
 
 function RollScene:computeResult()
-    local total, parts = 0, {}
+    local config = self.config
+    local parts = {}
     local high, low = nil, nil
 
     for _, group in ipairs(self.groups) do
-        local value = Dice.groupValue(self.spec, group)
-        total += value
-        parts[#parts + 1] = Dice.groupLabel(self.spec, group)
+        local value = Dice.groupValue(config, group)
+        parts[#parts + 1] = Dice.groupLabel(config, group)
         if high == nil or value > high then high = value end
         if low == nil or value < low then low = value end
     end
 
+    local total, diceTotal = Dice.total(config, self.groups)
+
+    -- A natural 20 is a property of the die, not of the total, so this reads
+    -- the dice subtotal and ignores the modifier. Under advantage it is the
+    -- kept die that counts, which Dice.groupValue has already picked.
     local banner = nil
-    if self.spec.key == "d20" and self.count == 1 then
-        if total == 20 then banner = "NATURAL 20!"
-        elseif total == 1 then banner = "NATURAL 1" end
+    if config.spec.key == "d20" and config.count == 1 then
+        if diceTotal == 20 then banner = "NATURAL 20!"
+        elseif diceTotal == 1 then banner = "NATURAL 1" end
     end
 
     self.result = {
-        notation = Dice.notation(self.spec, self.count),
+        notation = Dice.notation(config),
         total = total,
+        diceTotal = diceTotal,
+        modifier = config.modifier,
         parts = parts,
         high = high,
         low = low,
@@ -173,7 +186,7 @@ function RollScene:draw()
     gfx.clear(gfx.kColorWhite)
 
     Util.drawBar(0, 0, 400, 24)
-    Util.drawInvertedText(Dice.notation(self.spec, self.count), 8, 4)
+    Util.drawInvertedText(Dice.notation(self.config), 8, 4)
     Util.drawInvertedText("B: change dice", 392, 4, kTextAlignment.right)
 
     for _, die in ipairs(self.dice) do
@@ -239,22 +252,38 @@ function RollScene:drawOverlay()
     local y = ease.outCubic(self.overlayFrames, 240, PANEL_Y - 240, OVERLAY_FRAMES)
     Util.drawPanel(PANEL_X, y, PANEL_W, PANEL_H)
 
+    -- The notation already carries the modifier and adv/dis, so the right-hand
+    -- slot is free for whatever is most worth saying about this particular roll.
     gfx.drawTextAligned(r.notation, PANEL_X + 16, y + 12, kTextAlignment.left)
-    if self.count > 1 then
-        gfx.drawTextAligned("high " .. r.high .. "   low " .. r.low,
-            PANEL_X + PANEL_W - 16, y + 12, kTextAlignment.right)
-    elseif r.banner then
-        gfx.drawTextAligned(r.banner, PANEL_X + PANEL_W - 16, y + 12, kTextAlignment.right)
+    local aside = r.banner
+    if aside == nil and self.config.count > 1 then
+        aside = "high " .. r.high .. "   low " .. r.low
+    end
+    if aside then
+        gfx.drawTextAligned(aside, PANEL_X + PANEL_W - 16, y + 12, kTextAlignment.right)
     end
 
     Util.drawBigText(tostring(r.total), 200, y + 38, 4, kTextAlignment.center)
 
     -- The individual dice, wrapped and truncated if there are a lot of them.
-    local breakdown = table.concat(r.parts, self.spec.percentile and ",  " or " + ")
-    gfx.drawTextInRect(breakdown, PANEL_X + 14, y + 112, PANEL_W - 28, 44,
+    gfx.drawTextInRect(self:breakdownText(), PANEL_X + 14, y + 112, PANEL_W - 28, 44,
         nil, "...", kTextAlignment.center)
 
     Util.drawBar(0, 218, 400, 22)
     Util.drawInvertedText("A: roll again", 8, 221)
     Util.drawInvertedText("B: change dice", 392, 221, kTextAlignment.right)
+end
+
+-- "4 + 2 + 6" on its own, or "(4 + 2 + 6)  + 3" once a modifier is involved --
+-- the brackets keep it honest about what was added to what.
+function RollScene:breakdownText()
+    local r = self.result
+    local dice = table.concat(r.parts, Dice.separator(self.config))
+    if r.modifier == 0 then
+        return dice
+    end
+    if #r.parts > 1 then
+        dice = "(" .. dice .. ")"
+    end
+    return dice .. (r.modifier > 0 and "  + " or "  - ") .. math.abs(r.modifier)
 end

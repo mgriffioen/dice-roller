@@ -5,17 +5,18 @@ Layout = {}
 local MAX_DIE <const> = 78
 local MIN_DIE <const> = 20
 
--- `groups` is the list from Dice.build. Percentile groups hold two dice that
--- must sit side by side, so a cell is wider for those.
+-- `groups` is the list from Dice.build. A group of two dice -- a percentile
+-- pair, or an advantage/disadvantage pair -- has to sit side by side, so a cell
+-- is wider for those.
 --
 -- Rather than hard-coding a grid per count, try every column count and keep
 -- whichever produces the largest dice. Cheap (there are at most 12 groups) and
 -- it means the layout stays sensible if the count limits ever change.
-function Layout.arrange(groups, spec, x, y, w, h)
+function Layout.arrange(groups, x, y, w, h)
     local n = #groups
     if n == 0 then return end
 
-    local pair = spec.percentile
+    local pair = #groups[1] == 2
     local cellRatioW = pair and 1.95 or 1.18   -- cell width  in die-sizes
     local cellRatioH <const> = 1.30            -- cell height in die-sizes
 
@@ -46,8 +47,8 @@ function Layout.arrange(groups, spec, x, y, w, h)
             local cx = left + cellW * (col + 0.5)
             local cy = top + cellH * (row + 0.5)
             if pair then
-                -- Tens on the left, units on the right, slightly smaller so the
-                -- pair reads as one result.
+                -- Side by side and slightly smaller, so the two dice read as
+                -- one result rather than two.
                 local half = size * 0.86
                 group[1].size = half
                 group[1].x, group[1].y = cx - half * 0.56, cy

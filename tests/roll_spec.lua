@@ -27,9 +27,14 @@ end
 
 math.randomseed(99)
 
+local d20base
+for _, spec in ipairs(DiceTypes) do
+    if spec.key == "d20" then d20base = spec end
+end
+
 -- Drive a whole roll: crank hard, then stop, and see that it lands.
-local function playThrough(spec, count, useButton)
-    RollScene:enter(spec, count)
+local function playThrough(config, useButton)
+    RollScene:enter(config)
     Input.docked = useButton or false
     Input.crank = 0
     Input.held = {}
@@ -41,7 +46,7 @@ local function playThrough(spec, count, useButton)
         RollScene:update(); frames = frames + 1
     end
     check(RollScene.state == "tumbling",
-        spec.key .. ": expected tumbling after cranking, got " .. RollScene.state)
+        Dice.notation(config) .. ": expected tumbling after cranking, got " .. RollScene.state)
 
     -- Phase 2: let go and wait for the result.
     Input.crank = 0
@@ -50,40 +55,73 @@ local function playThrough(spec, count, useButton)
         RollScene:update(); frames = frames + 1
     end
     check(RollScene.state == "result",
-        spec.key .. " x" .. count .. ": never reached the result state (" ..
+        Dice.notation(config) .. ": never reached the result state (" ..
         RollScene.state .. " after " .. frames .. " frames)")
     return RollScene.result, frames
 end
 
+local function config(spec, count, modifier, mode)
+    return { spec = spec, count = count or 1, modifier = modifier or 0, mode = mode or "normal" }
+end
+
 for _, spec in ipairs(DiceTypes) do
     for _, count in ipairs({ 1, 2, spec.maxCount }) do
-        local r, frames = playThrough(spec, count)
-        check(r ~= nil, spec.key .. " x" .. count .. ": no result")
-        if r then
-            check(r.total >= count and r.total <= count * spec.sides,
-                spec.key .. " x" .. count .. ": total " .. r.total .. " out of range")
-            check(#r.parts == count,
-                spec.key .. " x" .. count .. ": expected " .. count .. " parts, got " .. #r.parts)
-            check(r.high >= r.low, "high/low inverted")
-            check(Game.lastResult == r, "lastResult not published")
-            -- Every die must be settled and stationary once the overlay is up.
-            for _, d in ipairs(RollScene.dice) do
-                check(d.settled, spec.key .. ": a die is still tumbling on the result screen")
+        for _, mode in ipairs({ "normal", "advantage", "disadvantage" }) do
+            for _, modifier in ipairs({ 0, 4, -3 }) do
+                local c = config(spec, count, modifier, mode)
+                local r, frames = playThrough(c)
+                local name = Dice.notation(c)
+                check(r ~= nil, name .. ": no result")
+                if r then
+                    local lo, hi = Dice.range(c)
+                    check(r.total >= lo and r.total <= hi,
+                        name .. ": total " .. r.total .. " outside " .. lo .. ".." .. hi)
+                    check(r.total == r.diceTotal + modifier,
+                        name .. ": total does not equal dice + modifier")
+                    check(#r.parts == count,
+                        name .. ": expected " .. count .. " parts, got " .. #r.parts)
+                    check(r.high >= r.low, "high/low inverted")
+                    check(Game.lastResult == r, "lastResult not published")
+                    for _, d in ipairs(RollScene.dice) do
+                        check(d.settled, name .. ": a die is still tumbling on the result screen")
+                    end
+                    -- Exactly one die per pair is crossed out, and only under
+                    -- advantage or disadvantage.
+                    local dropped = 0
+                    for _, d in ipairs(RollScene.dice) do
+                        if d.dropped then dropped = dropped + 1 end
+                    end
+                    check(dropped == (Dice.usesAdvantage(c) and count or 0),
+                        name .. ": " .. dropped .. " dice crossed out, expected " ..
+                        (Dice.usesAdvantage(c) and count or 0))
+                end
+                check(frames < 260, name .. ": took " .. frames .. " frames, that feels too slow")
             end
         end
-        check(frames < 260, spec.key .. " x" .. count .. ": took " .. frames ..
-            " frames, that feels too slow")
     end
 end
 
+-- Advantage really does bias the result upwards.
+local function meanTotal(c, n)
+    local sum = 0
+    for _ = 1, n do sum = sum + playThrough(c).total end
+    return sum / n
+end
+local plain = meanTotal(config(d20base, 1), 150)
+local high  = meanTotal(config(d20base, 1, 0, "advantage"), 150)
+local low   = meanTotal(config(d20base, 1, 0, "disadvantage"), 150)
+check(high > plain and plain > low,
+    "expected disadvantage < normal < advantage, got " ..
+    string.format("%.1f / %.1f / %.1f", low, plain, high))
+
 -- The docked-crank fallback (hold A) must work too.
-local r = playThrough(DiceTypes[3], 3, true)
+local r = playThrough(config(DiceTypes[3], 3), true)
 check(r ~= nil and r.total >= 3 and r.total <= 18, "A-button fallback produced " .. tostring(r and r.total))
 
--- Natural 20 / natural 1 banners, single d20 only.
-local d20 = nil
-for _, s in ipairs(DiceTypes) do if s.key == "d20" then d20 = s end end
-RollScene:enter(d20, 1)
+-- Natural 20 / natural 1 banners, single d20 only, and judged on the die
+-- rather than the total.
+local d20 = d20base
+RollScene:enter(config(d20, 1))
 RollScene.dice[1].value = 20
 RollScene:computeResult()
 check(RollScene.result.banner == "NATURAL 20!", "missing nat 20 banner")
@@ -93,15 +131,53 @@ check(RollScene.result.banner == "NATURAL 1", "missing nat 1 banner")
 RollScene.dice[1].value = 13
 RollScene:computeResult()
 check(RollScene.result.banner == nil, "banner shown for a plain roll")
-RollScene:enter(d20, 2)
+
+-- A +7 modifier must not turn a 13 into a natural 20, nor a 20 into a non-crit.
+RollScene:enter(config(d20, 1, 7))
+RollScene.dice[1].value = 13
+RollScene:computeResult()
+check(RollScene.result.total == 20, "13 + 7 should total 20")
+check(RollScene.result.banner == nil, "a modifier must not manufacture a natural 20")
+RollScene.dice[1].value = 20
+RollScene:computeResult()
+check(RollScene.result.banner == "NATURAL 20!", "a modifier must not hide a natural 20")
+check(RollScene.result.total == 27, "20 + 7 should total 27")
+
+-- Under advantage the banner follows the kept die.
+RollScene:enter(config(d20, 1, 0, "advantage"))
+RollScene.dice[1].value, RollScene.dice[2].value = 20, 3
+RollScene:computeResult()
+check(RollScene.result.banner == "NATURAL 20!", "advantage should keep the natural 20")
+check(RollScene.result.total == 20, "advantage total should be the kept die")
+RollScene:enter(config(d20, 1, 0, "disadvantage"))
+RollScene.dice[1].value, RollScene.dice[2].value = 20, 1
+RollScene:computeResult()
+check(RollScene.result.banner == "NATURAL 1", "disadvantage should keep the natural 1")
+
+RollScene:enter(config(d20, 2))
 RollScene.dice[1].value, RollScene.dice[2].value = 20, 20
 RollScene:computeResult()
 check(RollScene.result.banner == nil, "banner should not appear for multiple d20s")
 check(RollScene.result.total == 40, "2d20 total wrong")
 
+-- The breakdown line brackets the dice once a modifier is in play.
+RollScene:enter(config(DiceTypes[3], 3, 2))
+RollScene.dice[1].value, RollScene.dice[2].value, RollScene.dice[3].value = 4, 2, 6
+RollScene:computeResult()
+check(RollScene:breakdownText() == "(4 + 2 + 6)  + 2",
+    "breakdown was " .. RollScene:breakdownText())
+RollScene:enter(config(DiceTypes[3], 3, 0))
+RollScene.dice[1].value, RollScene.dice[2].value, RollScene.dice[3].value = 4, 2, 6
+RollScene:computeResult()
+check(RollScene:breakdownText() == "4 + 2 + 6", "breakdown was " .. RollScene:breakdownText())
+RollScene:enter(config(d20, 1, -1))
+RollScene.dice[1].value = 11
+RollScene:computeResult()
+check(RollScene:breakdownText() == "11  - 1", "breakdown was " .. RollScene:breakdownText())
+
 -- A: reroll from the result screen; B: back to setup.
 SetupScene = { enter = noop }
-RollScene:enter(d20, 1)
+RollScene:enter(config(d20, 1))
 RollScene.state = "result"
 Input.justPressed = { [playdate.kButtonA] = true }
 RollScene:update()
@@ -114,7 +190,7 @@ check(Game.current == SetupScene, "B should return to the setup scene")
 Input.justPressed = {}
 local totals = {}
 for _ = 1, 40 do
-    local res = playThrough(d20, 1)
+    local res = playThrough(config(d20, 1))
     totals[res.total] = true
 end
 local distinct = 0

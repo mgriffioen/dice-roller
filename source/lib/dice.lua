@@ -15,7 +15,7 @@ DiceTypes = {
     { key = "d8",   sides = 8,   shape = "diamond",  maxCount = 12 },
     { key = "d10",  sides = 10,  shape = "kite",     maxCount = 12 },
     { key = "d12",  sides = 12,  shape = "pentagon", maxCount = 12 },
-    { key = "d20",  sides = 20,  shape = "hexagon",  maxCount = 12 },
+    { key = "d20",  sides = 20,  shape = "hexagon",  maxCount = 12, allowAdvantage = true },
     { key = "d100", sides = 100, shape = "kite",     maxCount = 6, percentile = true },
 }
 
@@ -63,6 +63,7 @@ function Die:init(spec, role)
     self.hopPhase = math.random() * math.pi * 2
     self.settled = false
     self.landFrames = 0      -- counts down through the squash-and-settle bounce
+    self.dropped = false     -- the loser of an advantage/disadvantage pair
 end
 
 -- Raw value in "die units": 1..sides normally, 0/10/20..90 for a tens die,
@@ -134,6 +135,15 @@ function Die:draw(energy)
     else
         self:drawPolygonDie(cx, cy, r, squash)
     end
+
+    -- Advantage and disadvantage each throw one of the pair away. Crossing it
+    -- out is the clearest way to show which face actually counted.
+    if self.dropped then
+        gfx.setColor(gfx.kColorBlack)
+        gfx.setLineWidth(2)
+        gfx.drawLine(cx - r * 0.85, cy - r * 0.85, cx + r * 0.85, cy + r * 0.85)
+        gfx.setLineWidth(1)
+    end
 end
 
 -- A d2 is a coin, so it flips instead of tumbling: squeeze its width by the
@@ -195,19 +205,48 @@ end
 -- ---------------------------------------------------------------------------
 -- Building and scoring a handful of dice
 -- ---------------------------------------------------------------------------
+-- Everything below takes a `config`: the whole description of one throw.
+--
+--   { spec = <entry from DiceTypes>, count = 3, modifier = 2, mode = "normal" }
+--
+-- `mode` is "normal", "advantage" or "disadvantage", and only means anything
+-- for a die type flagged allowAdvantage (the d20).
 Dice = {}
 
+Dice.MOD_MIN = -20
+Dice.MOD_MAX = 20
+
+function Dice.newConfig()
+    return { spec = DiceTypes[3], count = 1, modifier = 0, mode = "normal" }
+end
+
+function Dice.usesAdvantage(config)
+    return config.spec.allowAdvantage == true and config.mode ~= "normal"
+end
+
+-- How many physical dice make up one result. Two for a percentile pair, and two
+-- for advantage/disadvantage -- which is why both fall out of the same code.
+function Dice.groupSize(config)
+    if config.spec.percentile or Dice.usesAdvantage(config) then
+        return 2
+    end
+    return 1
+end
+
 -- Returns the flat list of physical dice, and a list of groups. A group is one
--- "roll" the player asked for: one die normally, a tens/units pair for a d100.
-function Dice.build(spec, count)
+-- "roll" the player asked for: one die normally, a tens/units pair for a d100,
+-- a pair to choose between under advantage or disadvantage.
+function Dice.build(config)
     local all, groups = {}, {}
-    for _ = 1, count do
+    for _ = 1, config.count do
         local group = {}
-        if spec.percentile then
-            group[1] = Die(spec, "tens")
-            group[2] = Die(spec, "units")
+        if config.spec.percentile then
+            group[1] = Die(config.spec, "tens")
+            group[2] = Die(config.spec, "units")
         else
-            group[1] = Die(spec)
+            for i = 1, Dice.groupSize(config) do
+                group[i] = Die(config.spec)
+            end
         end
         for _, die in ipairs(group) do all[#all + 1] = die end
         groups[#groups + 1] = group
@@ -215,25 +254,91 @@ function Dice.build(spec, count)
     return all, groups
 end
 
--- The score of one group: a plain die's face value, or the percentile pair
--- added together with 00 + 0 reading as 100.
-function Dice.groupValue(spec, group)
-    if spec.percentile then
+-- Which die of an advantage/disadvantage pair counts. Ties keep the first,
+-- which is arbitrary but means the crossed-out die is always the second.
+local function keptIndex(config, group)
+    local a, b = group[1].value, group[2].value
+    if config.mode == "advantage" then
+        return b > a and 2 or 1
+    end
+    return b < a and 2 or 1
+end
+
+-- The score of one group, before any modifier: a plain die's face value, a
+-- percentile pair added together with 00 + 0 reading as 100, or the kept die
+-- of an advantage/disadvantage pair.
+function Dice.groupValue(config, group)
+    if config.spec.percentile then
         local tens, units = group[1].value, group[2].value
         if tens == 0 and units == 0 then return 100 end
         return tens + units
     end
+    if Dice.usesAdvantage(config) then
+        return group[keptIndex(config, group)].value
+    end
     return group[1].value
 end
 
-function Dice.groupLabel(spec, group)
-    if spec.percentile then
+function Dice.groupLabel(config, group)
+    if config.spec.percentile then
         return string.format("%02d+%d=%d", group[1].value, group[2].value,
-            Dice.groupValue(spec, group))
+            Dice.groupValue(config, group))
+    end
+    if Dice.usesAdvantage(config) then
+        local kept = keptIndex(config, group)
+        return group[kept].value .. "(" .. group[3 - kept].value .. ")"
     end
     return tostring(group[1].value)
 end
 
-function Dice.notation(spec, count)
-    return count .. spec.key
+-- Flag the die each advantage/disadvantage pair discards, as soon as both dice
+-- in that pair have landed, so it can be crossed out while the rest are still
+-- in the air.
+function Dice.markDropped(config, groups)
+    if not Dice.usesAdvantage(config) then return end
+    for _, group in ipairs(groups) do
+        if not group.marked and group[1].settled and group[2].settled then
+            group.marked = true
+            group[3 - keptIndex(config, group)].dropped = true
+        end
+    end
+end
+
+-- Sum of every group plus the modifier, with the dice-only subtotal alongside
+-- it: a natural 20 is about the die, not about the total.
+function Dice.total(config, groups)
+    local diceTotal = 0
+    for _, group in ipairs(groups) do
+        diceTotal += Dice.groupValue(config, group)
+    end
+    return diceTotal + config.modifier, diceTotal
+end
+
+function Dice.notation(config)
+    local text = config.count .. config.spec.key
+    if config.modifier > 0 then
+        text = text .. "+" .. config.modifier
+    elseif config.modifier < 0 then
+        text = text .. "-" .. -config.modifier
+    end
+    if Dice.usesAdvantage(config) then
+        text = text .. (config.mode == "advantage" and " adv" or " dis")
+    end
+    return text
+end
+
+-- Advantage narrows which results are likely but not which are possible, so it
+-- does not move the ends of the range.
+function Dice.range(config)
+    return config.count + config.modifier,
+           config.count * config.spec.sides + config.modifier
+end
+
+-- Plain dice add up, so " + " reads correctly between them. Pairs already carry
+-- their own arithmetic inside each label, so they get a list separator instead.
+function Dice.separator(config)
+    if config.spec.percentile or Dice.usesAdvantage(config) then
+        return ",  "
+    end
+    return " + "
 end
