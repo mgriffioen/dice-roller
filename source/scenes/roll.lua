@@ -20,6 +20,14 @@ function RollScene:enter(config)
     self.config = config
     self.dice, self.groups = Dice.build(config)
     Layout.arrange(self.groups, 8, 28, 384, 164)
+
+    -- Render every face this throw can show before the first frame, so the
+    -- tumble does not stutter the first time each value comes up.
+    for _, die in ipairs(self.dice) do
+        local labels = die:possibleLabels()
+        Numerals.prewarm(labels, die:faceHeight(labels[#labels]))
+    end
+
     self:reset()
 end
 
@@ -263,7 +271,10 @@ function RollScene:drawOverlay()
         gfx.drawTextAligned(aside, PANEL_X + PANEL_W - 16, y + 12, kTextAlignment.right)
     end
 
-    Util.drawBigText(tostring(r.total), 200, y + 38, 4, kTextAlignment.center)
+    -- Big, but shrunk to fit once a total runs to four digits.
+    local total = tostring(r.total)
+    local height = Numerals.fit(total, PANEL_W - 80, 62)
+    Numerals.draw(total, 200, y + 40 + height / 2, height)
 
     -- The individual dice, wrapped and truncated if there are a lot of them.
     gfx.drawTextInRect(Dice.breakdownText(self.config, r.parts),

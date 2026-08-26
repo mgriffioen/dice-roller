@@ -24,7 +24,9 @@ local noop = function() end
 local gfx = setmetatable({}, { __index = function() return noop end })
 gfx.kColorWhite, gfx.kColorBlack, gfx.kColorClear = 1, 0, 2
 gfx.getTextSize = function(s) return #s * 8, 16 end
-gfx.image = { new = function() return { width = 8, height = 16, drawScaled = noop } end }
+gfx.image = { new = function(w, h)
+    return { width = w or 8, height = h or 16, draw = noop, drawScaled = noop }
+end }
 
 -- An in-memory stand-in for playdate.datastore. The real one serialises the
 -- table to a file; deep-copying here keeps the same property that a stored
@@ -52,6 +54,4 @@ function resetDatastore()
     files = {}
 end
 kTextAlignment = { left = 0, center = 1, right = 2 }
-Util = { clamp = function(v, lo, hi) return math.max(lo, math.min(hi, v)) end,
-         bigTextSize = function(t, s) return #t * 8 * s, 16 * s end,
-         drawBigText = noop }
+Util = { clamp = function(v, lo, hi) return math.max(lo, math.min(hi, v)) end }

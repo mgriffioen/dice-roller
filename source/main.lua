@@ -15,6 +15,7 @@ import "CoreLibs/easing"
 kTextAlignment = kTextAlignment or playdate.graphics.kTextAlignment
 
 import "lib/util"
+import "lib/numerals"
 import "lib/dice"
 import "lib/layout"
 import "lib/sfx"

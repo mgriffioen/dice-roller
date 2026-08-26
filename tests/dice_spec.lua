@@ -1,4 +1,5 @@
 dofile(DIR .. "/stub.lua")
+dofile(OUT .. "/numerals.lua")
 dofile(OUT .. "/dice.lua")
 dofile(OUT .. "/layout.lua")
 
@@ -181,11 +182,7 @@ for _, spec in ipairs(DiceTypes) do
     end
 end
 
--- 7. The number on a die's face stays on the die ---------------------------
--- The stub font reports 8px per character and 16px tall; the real system font
--- differs, so these check proportions rather than exact pixels.
-local FONT_W, FONT_H = 8, 16
-
+-- 7. The number on a die's face stays on the die --------------------------
 local biggest = 0
 for _, spec in ipairs(DiceTypes) do
     for _, mode in ipairs({ "normal", "advantage" }) do
@@ -197,44 +194,57 @@ for _, spec in ipairs(DiceTypes) do
                 -- Worst-case face for this die: the widest label it can show.
                 d.value = spec.percentile and (d.role == "tens" and 90 or 9) or spec.sides
                 local label = d:label()
-                local scale = d:faceScale(label)
-                local textH, textW = FONT_H * scale, FONT_W * #label * scale
+                local height = d:faceHeight(label)
+                local width = Numerals.width(label, height)
                 local name = Dice.notation(c) .. " " .. label
 
-                check(scale == 1 or scale == 2,
-                    name .. ": face scale " .. scale .. " -- triple size reads as a number " ..
-                    "with a die drawn round it")
-                check(textH <= d.size * 0.6,
-                    name .. ": number is " .. math.floor(textH / d.size * 100) ..
+                check(height > 0, name .. ": face height of " .. height)
+                check(height <= d.size * 0.401,
+                    name .. ": number is " .. math.floor(height / d.size * 100) ..
                     "% of the die's height")
-                if scale > 1 then
-                    check(textW <= d.size * 0.62,
-                        name .. ": number is wider than the die can carry")
-                end
-                biggest = math.max(biggest, textH / d.size)
+                check(width <= d.size * 0.561,
+                    name .. ": number is wider than the die can carry")
+                biggest = math.max(biggest, height / d.size)
             end
         end
     end
 end
-check(biggest < 0.6, "the largest number fills " .. math.floor(biggest * 100) .. "% of its die")
+check(biggest <= 0.401, "the largest number fills " .. math.floor(biggest * 100) .. "% of its die")
 
--- The setup screen's preview die should look the same whichever type is shown:
--- a number that jumps size as you scroll through the list reads as a bug.
-local previewScale = nil
+-- Drawing numerals as shapes buys a continuous range of sizes, where scaled
+-- bitmap text only stepped between whole multiples. A bigger die must get a
+-- bigger number, not the same one until it crosses a threshold.
+local d6 = DiceTypes[3]
+local prev = 0
+for _, size in ipairs({ 24, 36, 48, 60, 72, 78 }) do
+    local d = Die(d6)
+    d.size = size
+    local h = d:faceHeight("6")
+    check(h > prev, "a " .. size .. "px die should take a bigger number than a smaller one")
+    prev = h
+end
+
+-- A two-digit face is shrunk relative to a one-digit face on the same die.
+local wide, narrow = Die(DiceTypes[7]), Die(DiceTypes[7])
+wide.size, narrow.size = 63, 63
+check(wide:faceHeight("20") < narrow:faceHeight("7"),
+    "a two-digit face should shrink to fit where a single digit need not")
+
+-- Scrolling the setup screen's die list must not make the preview number jump
+-- about. A two-digit face is legitimately a shade smaller, but only a shade --
+-- under the old whole-multiple scaling this was a halving.
+local lowest, highest = nil, nil
 for _, spec in ipairs(DiceTypes) do
     local d = Die(spec, spec.percentile and "tens" or "normal")
     d.size = 76
     d.value = spec.percentile and 90 or spec.sides
-    local scale = d:faceScale(d:label())
-    check(scale == 2, "preview " .. spec.key .. " should use double size, got " .. scale)
-    previewScale = previewScale or scale
-    check(scale == previewScale, "preview scale is inconsistent between die types")
+    local h = d:faceHeight(d:label())
+    lowest = math.min(lowest or h, h)
+    highest = math.max(highest or h, h)
 end
-
--- Crowded handfuls fall back to the plain font rather than overflowing.
-local crowded = Die(DiceTypes[3])
-crowded.size = 40
-check(crowded:faceScale("6") == 1, "a small die should use the unscaled font")
+check(lowest / highest > 0.9,
+    "preview numbers vary by " .. math.floor((1 - lowest / highest) * 100) ..
+    "% across die types, which will read as jumping")
 
 -- 8. Every die draws, in every state --------------------------------------
 -- Drawing is stubbed so this proves nothing about pixels, but the interior

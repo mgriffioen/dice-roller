@@ -141,7 +141,8 @@ source/
   lib/
     dice.lua          dice types, shapes, scoring a throw, and the Die class
     layout.lua        fits N dice into a rectangle at the largest size that works
-    util.lua          drawing helpers: scaled text, panels, bars, screen dimming
+    util.lua          drawing helpers: panels, bars, screen dimming
+    numerals.lua      digits drawn as stroke paths, so they fit at any size
     sfx.lua           synth blips -- no audio files needed
     history.lua       the last 20 rolls, saved with playdate.datastore
   scenes/
@@ -177,18 +178,23 @@ players a button fallback, which is what holding A does here.
 the dice behind the result overlay. Design in black-on-white shapes with fat
 outlines and it reads well.
 
-**There is no vector text.** The system font tops out around 16px. To draw a big
-number, render the string into an offscreen `gfx.image` once and blit it back
-with `image:drawScaled()` — see `Util.drawBigText`. Cache the images; making
-them every frame is wasteful.
+**There is no vector text**, and scaling the system font only works in whole
+multiples — 16px or 32px, nothing between — because a fractional scale doubles
+some pixel rows and not others. That is fine when any of those sizes will do.
 
-The catch is that this only scales in whole multiples — 16px or 32px, nothing
-between — because a fractional scale doubles some pixel rows and not others,
-which looks broken at this resolution. So `Die:faceScale` picks between exactly
-two sizes based on how big the die is, with a width check so a two-digit
-percentile face doesn't outgrow the die carrying it. Resist deriving that
-choice from per-shape geometry: it makes the size jump around between die types
-in ways that read as a bug.
+It was not fine for numbers that have to fit inside a die whose size the layout
+picks freely: a d20 at 63px and one at 78px got the same 32px number, and a
+two-digit face had to drop a whole step to fit. So the dice faces and the result
+total use `lib/numerals.lua` instead — digits defined as stroke paths on a unit
+grid and drawn as shapes. Any height, crisp at all of them, and chamfered to sit
+with the faceted dice.
+
+Drawing a dozen numbers stroke by stroke every frame would be hundreds of Lua
+calls, so each one is rendered into an offscreen `gfx.image` once and blitted
+after. That caching trick is worth knowing on its own: `gfx.pushContext(img)`,
+draw, `gfx.popContext()`, then `img:draw()` forever after. The roll scene
+pre-renders every face a throw can show before the first frame, so the tumble
+never stutters the first time a value comes up.
 
 **One config table beats threading arguments.** A throw is described by
 `{ spec, count, modifier, mode }`, built on the setup screen and handed to the
@@ -250,6 +256,13 @@ Lua 5.4, stubs the handful of `playdate.*` calls the logic touches, and checks:
 - the setup screen's field list: wrapping, clamping the modifier at ±20, the
   count clamping when you switch to a die with a lower limit, and the cursor
   never pointing at the d20-only row after leaving the d20
+- the numerals: widths scale with height and digit count, a number too wide for
+  its box shrinks until it fits, every digit 0-9 actually has a glyph (a missing
+  one would draw nothing, silently, for one digit), and repeats come from the
+  cache instead of re-rendering
+- a die's number never exceeds its share of the die at any size, a bigger die
+  always gets a bigger number, and the setup preview does not jump size as you
+  scroll the die list
 - the layout solver keeps every die on screen at every supported count
 - every die type draws without error at every size, mid-tumble at a range of
   angles, landing, at rest, and crossed out — which is what catches a shape

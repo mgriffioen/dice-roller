@@ -278,35 +278,35 @@ function Die:drawPolygonDie(cx, cy, r, squash)
     self:drawFace(cx, cy)
 end
 
--- Below this size the number is drawn in the plain font; at or above it, at
--- double size. Scaled bitmap text only comes in whole multiples -- a fractional
--- scale doubles some pixel rows and not others, which looks broken at this
--- resolution -- so this is one step rather than a smooth ramp.
---
--- Triple size does fit inside the bigger shapes, but it reads as a number with
--- a die drawn around it rather than a die with a number on it.
-local DOUBLE_FACE_SIZE <const> = 58
+-- How much of the die the number takes up. Drawing numerals as shapes means
+-- any height is available, so these are a look rather than a compromise: the
+-- number should read as sitting on the die, not filling it.
+local FACE_HEIGHT <const> = 0.40
+local FACE_WIDTH <const> = 0.56
 
--- ...unless the number would end up wider than the die carrying it. A
--- two-digit percentile face is nearly twice the width of a single digit, and
--- the system font's exact metrics are not something to assume.
-local FACE_WIDTH_LIMIT <const> = 0.62
+-- The height this die's face will be drawn at. Two digits are nearly twice the
+-- width of one, so a wide label is shrunk to fit rather than allowed to spill
+-- over the outline.
+function Die:faceHeight(text)
+    return Numerals.fit(text, self.size * FACE_WIDTH, self.size * FACE_HEIGHT)
+end
 
-function Die:faceScale(text)
-    if self.size < DOUBLE_FACE_SIZE then
-        return 1
+-- Every face this die can show, for pre-rendering before a throw starts.
+function Die:possibleLabels()
+    local labels = {}
+    if self.role == "tens" then
+        for v = 0, 9 do labels[#labels + 1] = string.format("%02d", v * 10) end
+    elseif self.role == "units" then
+        for v = 0, 9 do labels[#labels + 1] = tostring(v) end
+    else
+        for v = 1, self.spec.sides do labels[#labels + 1] = tostring(v) end
     end
-    if gfx.getTextSize(text) * 2 > self.size * FACE_WIDTH_LIMIT then
-        return 1
-    end
-    return 2
+    return labels
 end
 
 function Die:drawFace(cx, cy)
     local text = self:label()
-    local scale = self:faceScale(text)
-    local _, h = Util.bigTextSize(text, scale)
-    Util.drawBigText(text, cx, cy - h / 2, scale, kTextAlignment.center)
+    Numerals.draw(text, cx, cy, self:faceHeight(text))
 end
 
 -- ---------------------------------------------------------------------------

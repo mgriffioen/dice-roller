@@ -16,6 +16,7 @@ playdate.isCrankDocked = function() return Input.docked end
 playdate.buttonJustPressed = function(b) return Input.justPressed[b] == true end
 playdate.buttonIsPressed = function(b) return Input.held[b] == true end
 
+dofile(OUT .. "/numerals.lua")
 dofile(OUT .. "/dice.lua")
 dofile(OUT .. "/layout.lua")
 dofile(OUT .. "/history.lua")
