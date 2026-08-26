@@ -3,7 +3,8 @@
 A D&D/RPG dice roller for the [Playdate](https://play.date/). Set up the throw --
 die type, how many, a `+N` modifier, and advantage or disadvantage on a d20 --
 then turn the crank. The dice tumble, land one by one, and the total slides up
-on an overlay.
+on an overlay. Past rolls are kept on a second page, and any of them can be
+thrown again.
 
 Written in Lua against the Playdate SDK, with comments aimed at someone learning
 the platform.
@@ -19,11 +20,14 @@ open DiceRoller.pdx           # macOS: opens in the Playdate Simulator
 ```
 
 On Linux/Windows, launch the Simulator and open `DiceRoller.pdx` from it. To put
-it on hardware, use the Simulator's **Device → Upload Game to Device**, or the
-sideload uploader at <https://play.date/account/sideload/>.
+it on hardware, use the Simulator's **Device → Upload Game to Device**, or zip
+the built `DiceRoller.pdx` and upload it at
+<https://play.date/account/sideload/>. Builds are gitignored — a `.pdx` is
+output, not source, so it isn't kept in the repo.
 
-The Simulator lets you drive the crank with the mouse: grab the crank in the
-right-hand panel, or hold <kbd>⌘</kbd>/<kbd>Ctrl</kbd> and drag.
+The Simulator has a crank dial in the control panel below the device: drag it
+round with the mouse to crank. The **Docked** checkbox beside it folds the crank
+away, which is how to exercise the A-button fallback.
 
 ## Controls
 
@@ -36,6 +40,7 @@ d20) advantage/disadvantage.
 | Left / Right | Change the selected field |
 | Crank | Change the selected field, faster — `+20` is forty button presses or about half a turn |
 | A | Go to the rolling screen |
+| B | Open the history page |
 
 Die type and count wrap around; the modifier clamps at ±20. The
 advantage/disadvantage row only appears for a d20, and resets to normal if you
@@ -176,7 +181,8 @@ unit-circle points, then rotated, scaled and translated at draw time
 (`Die:drawPolygonDie`). One table works at any size and any angle.
 
 **`import` is not `require`.** It's resolved by `pdc` at compile time and can't
-return a value, so modules export globals (`Dice`, `Layout`, `Util`, `Sfx`). The
+return a value, so modules export globals (`Dice`, `Layout`, `Util`, `Sfx`,
+`History`). The
 `class()` function from `CoreLibs/object` also defines a global — `class("Die")`
 creates `Die`.
 
