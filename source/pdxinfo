@@ -1,0 +1,7 @@
+name=Dice Roller
+author=mgriffioen
+description=Pick your dice, turn the crank, roll for initiative.
+bundleID=com.mgriffioen.diceroller
+version=1.0
+buildNumber=1
+imagePath=launcher

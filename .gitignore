@@ -1,0 +1,6 @@
+# pdc build output
+*.pdx/
+build/
+
+# macOS
+.DS_Store
