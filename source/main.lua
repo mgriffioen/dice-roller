@@ -1,7 +1,8 @@
 -- Dice Roller for Playdate
 --
--- Two scenes: pick your dice (scenes/setup.lua), then throw them with the crank
--- (scenes/roll.lua). Everything is drawn immediately each frame -- no sprites --
+-- Three scenes: pick your dice (scenes/setup.lua), throw them with the crank
+-- (scenes/roll.lua), and browse what you rolled before (scenes/history.lua).
+-- Everything is drawn immediately each frame -- no sprites --
 -- because at 30fps with a dozen shapes that is both fast enough and much easier
 -- to follow than a sprite/z-order system.
 
@@ -17,8 +18,10 @@ import "lib/util"
 import "lib/dice"
 import "lib/layout"
 import "lib/sfx"
+import "lib/history"
 import "scenes/setup"
 import "scenes/roll"
+import "scenes/history"
 
 local gfx <const> = playdate.graphics
 
@@ -26,7 +29,6 @@ local gfx <const> = playdate.graphics
 -- thing they need from each other is here.
 Game = {
     scene = nil,
-    lastResult = nil,
 }
 
 function Game.switchTo(scene, ...)
@@ -44,10 +46,14 @@ local function bootstrap()
     gfx.setFont(gfx.getSystemFont())
 
     Sfx.init()
+    History.load()
 
     local menu = playdate.getSystemMenu()
     menu:addCheckmarkMenuItem("sound", true, function(on)
         Sfx.enabled = on
+    end)
+    menu:addMenuItem("clear history", function()
+        History.clear()
     end)
 
     Game.switchTo(SetupScene)

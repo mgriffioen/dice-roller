@@ -361,3 +361,17 @@ function Dice.separator(config)
     end
     return " + "
 end
+
+-- "4 + 2 + 6" on its own, or "(4 + 2 + 6)  + 3" once a modifier is involved --
+-- the brackets keep it honest about what was added to what. The result overlay
+-- and the history page both show this, so it lives here rather than in either.
+function Dice.breakdownText(config, parts)
+    local dice = table.concat(parts, Dice.separator(config))
+    if config.modifier == 0 then
+        return dice
+    end
+    if #parts > 1 then
+        dice = "(" .. dice .. ")"
+    end
+    return dice .. (config.modifier > 0 and "  + " or "  - ") .. math.abs(config.modifier)
+end

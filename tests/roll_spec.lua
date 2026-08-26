@@ -18,7 +18,10 @@ playdate.buttonIsPressed = function(b) return Input.held[b] == true end
 
 dofile(OUT .. "/dice.lua")
 dofile(OUT .. "/layout.lua")
+dofile(OUT .. "/history.lua")
 dofile(OUT .. "/roll.lua")
+resetDatastore()
+History.load()
 
 local failures = 0
 local function check(ok, msg)
@@ -81,7 +84,11 @@ for _, spec in ipairs(DiceTypes) do
                     check(#r.parts == count,
                         name .. ": expected " .. count .. " parts, got " .. #r.parts)
                     check(r.high >= r.low, "high/low inverted")
-                    check(Game.lastResult == r, "lastResult not published")
+                    -- The roll should have landed in the history.
+                    local logged = History.latest()
+                    check(logged ~= nil and logged.total == r.total and
+                          logged.notation == r.notation,
+                        name .. ": the roll was not recorded in the history")
                     for _, d in ipairs(RollScene.dice) do
                         check(d.settled, name .. ": a die is still tumbling on the result screen")
                     end
@@ -164,16 +171,18 @@ check(RollScene.result.total == 40, "2d20 total wrong")
 RollScene:enter(config(DiceTypes[3], 3, 2))
 RollScene.dice[1].value, RollScene.dice[2].value, RollScene.dice[3].value = 4, 2, 6
 RollScene:computeResult()
-check(RollScene:breakdownText() == "(4 + 2 + 6)  + 2",
-    "breakdown was " .. RollScene:breakdownText())
+local function breakdown()
+    return Dice.breakdownText(RollScene.config, RollScene.result.parts)
+end
+check(breakdown() == "(4 + 2 + 6)  + 2", "breakdown was " .. breakdown())
 RollScene:enter(config(DiceTypes[3], 3, 0))
 RollScene.dice[1].value, RollScene.dice[2].value, RollScene.dice[3].value = 4, 2, 6
 RollScene:computeResult()
-check(RollScene:breakdownText() == "4 + 2 + 6", "breakdown was " .. RollScene:breakdownText())
+check(breakdown() == "4 + 2 + 6", "breakdown was " .. breakdown())
 RollScene:enter(config(d20, 1, -1))
 RollScene.dice[1].value = 11
 RollScene:computeResult()
-check(RollScene:breakdownText() == "11  - 1", "breakdown was " .. RollScene:breakdownText())
+check(breakdown() == "11  - 1", "breakdown was " .. breakdown())
 
 -- A: reroll from the result screen; B: back to setup.
 SetupScene = { enter = noop }

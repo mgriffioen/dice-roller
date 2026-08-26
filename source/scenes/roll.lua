@@ -176,7 +176,7 @@ function RollScene:computeResult()
         low = low,
         banner = banner,
     }
-    Game.lastResult = self.result
+    History.record(config, self.result)
 end
 
 -- ---------------------------------------------------------------------------
@@ -266,24 +266,10 @@ function RollScene:drawOverlay()
     Util.drawBigText(tostring(r.total), 200, y + 38, 4, kTextAlignment.center)
 
     -- The individual dice, wrapped and truncated if there are a lot of them.
-    gfx.drawTextInRect(self:breakdownText(), PANEL_X + 14, y + 112, PANEL_W - 28, 44,
-        nil, "...", kTextAlignment.center)
+    gfx.drawTextInRect(Dice.breakdownText(self.config, r.parts),
+        PANEL_X + 14, y + 112, PANEL_W - 28, 44, nil, "...", kTextAlignment.center)
 
     Util.drawBar(0, 218, 400, 22)
     Util.drawInvertedText("A: roll again", 8, 221)
     Util.drawInvertedText("B: change dice", 392, 221, kTextAlignment.right)
-end
-
--- "4 + 2 + 6" on its own, or "(4 + 2 + 6)  + 3" once a modifier is involved --
--- the brackets keep it honest about what was added to what.
-function RollScene:breakdownText()
-    local r = self.result
-    local dice = table.concat(r.parts, Dice.separator(self.config))
-    if r.modifier == 0 then
-        return dice
-    end
-    if #r.parts > 1 then
-        dice = "(" .. dice .. ")"
-    end
-    return dice .. (r.modifier > 0 and "  + " or "  - ") .. math.abs(r.modifier)
 end

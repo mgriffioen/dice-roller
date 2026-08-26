@@ -49,6 +49,15 @@ function SetupScene:enter()
     self:refresh()
 end
 
+-- Take on a throw described elsewhere -- the history page handing back a past
+-- roll -- so that backing out of it lands on a setup screen that matches.
+function SetupScene:adopt(config)
+    self.config = config
+    self.typeIndex = indexOf(DiceTypes, config.spec)
+    self.selected = 1
+    self:refresh()
+end
+
 -- The advantage row only exists for die types that support it, so the field
 -- list is rebuilt rather than fixed.
 function SetupScene:fields()
@@ -150,6 +159,12 @@ function SetupScene:update()
         return
     end
 
+    if playdate.buttonJustPressed(playdate.kButtonB) then
+        Sfx.select()
+        Game.switchTo(HistoryScene)
+        return
+    end
+
     -- Idle wobble on the preview die so the screen isn't completely static.
     self.previewAngle += 0.9
     self.previewDie.angle = math.sin(math.rad(self.previewAngle)) * 7
@@ -168,9 +183,10 @@ function SetupScene:draw()
     -- Header ---------------------------------------------------------------
     Util.drawBar(0, 0, 400, 22)
     Util.drawInvertedText("DICE ROLLER", 8, 3)
-    if Game.lastResult then
-        Util.drawInvertedText("last: " .. Game.lastResult.notation .. " = " ..
-            Game.lastResult.total, 392, 3, kTextAlignment.right)
+    local last = History.latest()
+    if last then
+        Util.drawInvertedText("last: " .. last.notation .. " = " .. last.total,
+            392, 3, kTextAlignment.right)
     end
 
     -- Preview column -------------------------------------------------------
@@ -193,6 +209,7 @@ function SetupScene:draw()
     Util.drawInvertedText("up/down: choose", 8, 200)
     Util.drawInvertedText("A: roll", 392, 200, kTextAlignment.right)
     Util.drawInvertedText("left/right or crank: change", 8, 220)
+    Util.drawInvertedText("B: history", 392, 220, kTextAlignment.right)
 end
 
 function SetupScene:drawRow(field, y, selected)

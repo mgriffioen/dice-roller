@@ -13,5 +13,9 @@ for f in pathlib.Path(sys.argv[1]).rglob('*.lua'):
             line = f'{i}{lhs} = {lhs} {op} ({rest.strip()}){c}'
         line = re.sub(r'^\s*import\s+".*"\s*$', '', line)
         lines.append(line)
-    (out / f.name).write_text('\n'.join(lines))
+    # scenes/history.lua and lib/history.lua collide once flattened.
+    name = f.name
+    if f.parent.name == 'scenes' and (pathlib.Path(sys.argv[1]) / 'lib' / f.name).exists():
+        name = f.stem + '_scene.lua'
+    (out / name).write_text('\n'.join(lines))
 print("transpiled to", out)

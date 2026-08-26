@@ -50,7 +50,16 @@ switch to another die.
 | A (on the result) | Roll again with the same dice |
 | B | Back to the setup screen |
 
-Sound can be turned off from the Playdate system menu.
+**History page** — B from the setup screen. The last 20 rolls, newest first.
+
+| Input | Action |
+| --- | --- |
+| Up / Down, or crank | Browse |
+| A | Throw the selected roll again |
+| B | Back to the setup screen |
+
+Sound can be turned off from the Playdate system menu, and the history cleared
+from there too.
 
 ## Modifiers, advantage and disadvantage
 
@@ -74,6 +83,21 @@ Two details worth getting right, both covered by the tests:
 Advantage changes which results are *likely*, not which are *possible*, so it
 doesn't move the ends of the range.
 
+## Roll history
+
+Every roll is kept — its notation, total, and the individual dice — and the last
+20 survive a restart. Picking one and pressing A throws it again: each entry
+stores enough to rebuild the throw (die type, count, modifier, mode), so
+`2d20+3 dis` comes back exactly as it was.
+
+That file outlives the code that wrote it, which is worth designing for rather
+than hoping about. Entries carry a version so a future format change is
+discarded instead of half-read into a crash, and anything rebuilt from disk is
+re-validated on the way out: a count above the die's current limit is clamped, a
+modifier beyond ±20 is clamped, advantage on a die that no longer allows it is
+dropped, and an entry naming a die type that no longer exists simply refuses to
+load rather than crashing.
+
 ## How d100 works
 
 A d100 isn't one die — it's a pair of d10s: a *tens* die reading `00`–`90` and a
@@ -92,9 +116,11 @@ source/
     layout.lua        fits N dice into a rectangle at the largest size that works
     util.lua          drawing helpers: scaled text, panels, bars, screen dimming
     sfx.lua           synth blips -- no audio files needed
+    history.lua       the last 20 rolls, saved with playdate.datastore
   scenes/
     setup.lua         the field list: die type, count, modifier, advantage
     roll.lua          the crank throw, the settle sequence, the result overlay
+    history.lua       the second page: browse past rolls, throw one again
   launcher/
     card.png          350x155 launcher tile
     icon.png          32x32 icon
@@ -154,6 +180,13 @@ return a value, so modules export globals (`Dice`, `Layout`, `Util`, `Sfx`). The
 `class()` function from `CoreLibs/object` also defines a global — `class("Die")`
 creates `Die`.
 
+**Saving is one call.** `playdate.datastore.write(table, filename)` serialises a
+plain Lua table into the game's save folder and `read` gives it back — no format
+to define, as long as everything in it is a string, number, boolean, or another
+such table. Two things that aren't obvious: put a version number in the file so
+a later format change can be recognised and discarded, and re-validate whatever
+comes back, because a save file outlives the code that wrote it.
+
 **Seed the RNG yourself.** `math.randomseed(playdate.getSecondsSinceEpoch())`,
 or every launch replays the same "random" rolls.
 
@@ -185,12 +218,15 @@ Lua 5.4, stubs the handful of `playdate.*` calls the logic touches, and checks:
 - the layout solver keeps every die on screen at every supported count
 - a full throw — crank, release, settle, result — reaches a valid total, in a
   reasonable number of frames, via both the crank and the button fallback
+- the history: ordering, the 20-entry cap, surviving a reload, rebuilding a
+  throw from an entry, clamping stale values, discarding a corrupt or
+  future-versioned file, and browsing/wrapping/scrolling the page — including
+  that an empty history is navigable rather than a crash
 
 Drawing is stubbed, so this checks behaviour, not pixels — for those, run it.
 
 ## Ideas for next
 
-- Saved roll presets, using `playdate.datastore` to persist them
-- Roll history on a second page
+- Saved roll presets, pinned to the top of the history page
 - Accelerometer shake as an alternative to the crank
   (`playdate.readAccelerometer()`, after `playdate.startAccelerometer()`)

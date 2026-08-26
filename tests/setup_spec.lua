@@ -16,7 +16,10 @@ playdate.buttonIsPressed = function() return false end
 
 dofile(OUT .. "/dice.lua")
 dofile(OUT .. "/layout.lua")
+dofile(OUT .. "/history.lua")
 dofile(OUT .. "/setup.lua")
+resetDatastore()
+History.load()
 RollScene = { enter = noop }
 
 local failures = 0
