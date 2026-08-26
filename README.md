@@ -110,6 +110,28 @@ A d100 isn't one die — it's a pair of d10s: a *tens* die reading `00`–`90` a
 app rolls and animates both dice, shows them side by side, and displays each
 result as `70+3=73`.
 
+## Two drawing flags
+
+`source/lib/dice.lua` opens with a pair of constants, both on by default:
+
+- **`SHOW_FACETS`** — interior facet lines: an inset face with spokes out to the
+  corners, a rim on the d2 coin, and for the d20 its real face-on projection, a
+  central triangle with three spokes. A die reads as a die because of its
+  facets; the silhouette on its own is just a polygon.
+- **`SHOW_SHADOW`** — a dithered ellipse on the ground beneath each die. It
+  stays put while the die hops above it and shrinks as the die rises, which is
+  what makes the hop read as height rather than as the die sliding up the
+  screen.
+
+Set either to `false` for the flat look back. They are worth trying on hardware
+rather than in the Simulator: the facets are thin lines close together, and
+that is exactly the kind of detail the real display renders differently.
+
+One thing to expect — at the sizes a crowded roll uses, the number covers most
+of the die's middle, so the facets read mainly at the edges, on single-digit
+faces, and while the dice are tumbling. It is texture at the margins, not a
+transformation.
+
 ## Project layout
 
 ```
@@ -178,7 +200,14 @@ different scoring rule.
 
 **Shapes come from `playdate.geometry.polygon`.** Each die shape is stored as
 unit-circle points, then rotated, scaled and translated at draw time
-(`Die:drawPolygonDie`). One table works at any size and any angle.
+(`Die:drawPolygonDie`). One table works at any size and any angle — and the
+facet lines are stored the same way and pushed through the same transform, so
+the interior detail tumbles and squashes with the body instead of sliding
+around on it.
+
+Draw order matters more than it looks: facets first and thin, then the
+silhouette over them and thick. The outline staying the strongest edge is what
+holds the shape together when a crowded roll shrinks the dice.
 
 **`import` is not `require`.** It's resolved by `pdc` at compile time and can't
 return a value, so modules export globals (`Dice`, `Layout`, `Util`, `Sfx`,
@@ -222,6 +251,9 @@ Lua 5.4, stubs the handful of `playdate.*` calls the logic touches, and checks:
   count clamping when you switch to a die with a lower limit, and the cursor
   never pointing at the d20-only row after leaving the d20
 - the layout solver keeps every die on screen at every supported count
+- every die type draws without error at every size, mid-tumble at a range of
+  angles, landing, at rest, and crossed out — which is what catches a shape
+  added without the matching facet geometry
 - a full throw — crank, release, settle, result — reaches a valid total, in a
   reasonable number of frames, via both the crank and the button fallback
 - the history: ordering, the 20-entry cap, surviving a reload, rebuilding a

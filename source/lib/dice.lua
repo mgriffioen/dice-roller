@@ -45,6 +45,47 @@ local SHAPES <const> = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Interior detail
+-- ---------------------------------------------------------------------------
+-- Two looks, both cheap to turn off. A die reads as a die because of its
+-- facets, not its silhouette -- an outline on its own is just a polygon.
+local SHOW_FACETS <const> = true
+local SHOW_SHADOW <const> = true
+
+-- How far in the inset face sits, as a fraction of the silhouette. Big enough
+-- that the number still lands on clean white.
+local FACET_INSET <const> = 0.62
+
+-- Per shape: the inset face as a closed polygon, plus the spokes joining it to
+-- the corners. Unit-space like the silhouettes, so one table works at any size
+-- and any angle.
+local FACETS = {}
+
+for name, pts in pairs(SHAPES) do
+    local face, spokes = {}, {}
+    for i, p in ipairs(pts) do
+        face[i] = { p[1] * FACET_INSET, p[2] * FACET_INSET }
+        spokes[i] = { face[i], p }
+    end
+    FACETS[name] = { face = face, spokes = spokes }
+end
+
+do
+    -- The d20 is the one silhouette everybody recognises, so it gets its real
+    -- face-on projection instead of the generic inset: a central triangle with
+    -- three spokes. The hexagon's vertices start at -90 and step 60 degrees, so
+    -- the -90/30/150 corners are entries 1, 3 and 5.
+    local hexagon = SHAPES.hexagon
+    local face, spokes = {}, {}
+    for i, angle in ipairs({ -90, 30, 150 }) do
+        local a = math.rad(angle)
+        face[i] = { math.cos(a) * 0.62, math.sin(a) * 0.62 }
+        spokes[i] = { face[i], hexagon[i * 2 - 1] }
+    end
+    FACETS.hexagon = { face = face, spokes = spokes }
+end
+
+-- ---------------------------------------------------------------------------
 -- Die
 -- ---------------------------------------------------------------------------
 -- `role` is "normal", or "tens"/"units" for the two halves of a d100 pair.
@@ -130,6 +171,10 @@ function Die:draw(energy)
     local cx, cy = self.x, self.y + dy
     local r = self.size / 2
 
+    if SHOW_SHADOW then
+        self:drawShadow(r, dy)
+    end
+
     if self.spec.shape == "coin" then
         self:drawCoin(cx, cy, r, squash)
     else
@@ -160,31 +205,74 @@ function Die:drawCoin(cx, cy, r, squash)
     gfx.drawEllipseInRect(cx - w / 2, cy - h / 2, w, h)
     gfx.setLineWidth(1)
 
+    -- The coin's equivalent of a facet: a rim just inside the edge.
+    if SHOW_FACETS and flip > 0.4 then
+        gfx.drawEllipseInRect(cx - w * 0.39, cy - h * 0.39, w * 0.78, h * 0.78)
+    end
+
     if flip > 0.55 then
         self:drawFace(cx, cy)
     end
 end
 
+-- A dithered ellipse on the ground that stays put while the die hops above it.
+-- Shrinking it as the die rises is what makes the hop read as height rather
+-- than as the whole die sliding up the screen.
+function Die:drawShadow(r, dy)
+    local lift = math.min(-dy / (r * 0.9), 1)
+    local w = r * (1.5 - lift * 0.5)
+    local h = r * 0.34 * (1 - lift * 0.4)
+
+    gfx.setPattern({ 0x88, 0x22, 0x88, 0x22, 0x88, 0x22, 0x88, 0x22 })
+    gfx.fillEllipseInRect(self.x - w / 2, self.y + r * 0.86 - h / 2, w, h)
+    gfx.setColor(gfx.kColorBlack)
+end
+
 function Die:drawPolygonDie(cx, cy, r, squash)
-    local pts = SHAPES[self.spec.shape]
     local rad = math.rad(self.angle)
     local cosA, sinA = math.cos(rad), math.sin(rad)
 
-    local coords = {}
-    for i = 1, #pts do
-        local px, py = pts[i][1] * r, pts[i][2] * r * squash
-        coords[#coords + 1] = cx + px * cosA - py * sinA
-        coords[#coords + 1] = cy + px * sinA + py * cosA
+    -- One transform for the silhouette and the facets alike, so the interior
+    -- detail tumbles and squashes with the body instead of sliding around on it.
+    local function place(p)
+        local px, py = p[1] * r, p[2] * r * squash
+        return cx + px * cosA - py * sinA, cy + px * sinA + py * cosA
     end
 
-    local poly = geo.polygon.new(table.unpack(coords))
-    poly:close()
+    local function polygonOf(pts)
+        local coords = {}
+        for i = 1, #pts do
+            local x, y = place(pts[i])
+            coords[#coords + 1] = x
+            coords[#coords + 1] = y
+        end
+        local poly = geo.polygon.new(table.unpack(coords))
+        poly:close()
+        return poly
+    end
+
+    local body = polygonOf(SHAPES[self.spec.shape])
 
     gfx.setColor(gfx.kColorWhite)
-    gfx.fillPolygon(poly)
+    gfx.fillPolygon(body)
     gfx.setColor(gfx.kColorBlack)
+
+    -- Facets first and thin, then the silhouette over them and thick: the
+    -- outline stays the strongest edge, which is what holds the shape together
+    -- at the sizes a crowded roll uses.
+    if SHOW_FACETS then
+        local facets = FACETS[self.spec.shape]
+        gfx.setLineWidth(1)
+        gfx.drawPolygon(polygonOf(facets.face))
+        for _, spoke in ipairs(facets.spokes) do
+            local x1, y1 = place(spoke[1])
+            local x2, y2 = place(spoke[2])
+            gfx.drawLine(x1, y1, x2, y2)
+        end
+    end
+
     gfx.setLineWidth(2)
-    gfx.drawPolygon(poly)
+    gfx.drawPolygon(body)
     gfx.setLineWidth(1)
 
     self:drawFace(cx, cy)

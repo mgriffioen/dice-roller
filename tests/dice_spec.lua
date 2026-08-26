@@ -236,6 +236,41 @@ local crowded = Die(DiceTypes[3])
 crowded.size = 40
 check(crowded:faceScale("6") == 1, "a small die should use the unscaled font")
 
+-- 8. Every die draws, in every state --------------------------------------
+-- Drawing is stubbed so this proves nothing about pixels, but the interior
+-- facets are looked up per shape: a shape without an entry is a nil index at
+-- draw time, on the roll screen, for one die type only. Cheap to rule out.
+for _, spec in ipairs(DiceTypes) do
+    for _, role in ipairs(spec.percentile and { "tens", "units" } or { "normal" }) do
+        for _, size in ipairs({ 20, 36, 54, 63, 78 }) do
+            local d = Die(spec, role)
+            d.size = size
+            d.x, d.y = 200, 120
+
+            local ok, err = pcall(function()
+                -- Mid-tumble: spinning, hopping, at a range of angles.
+                d.settled = false
+                for _, angle in ipairs({ 0, 37, 90, 154, 233, 300 }) do
+                    d.angle = angle
+                    d:update(6)
+                    d:draw(6)
+                end
+                -- Landing squash, at rest, and crossed out by disadvantage.
+                d:settle(d:randomValue())
+                d:draw(0)
+                for _ = 1, 8 do
+                    d:update(0)
+                    d:draw(0)
+                end
+                d.dropped = true
+                d:draw(0)
+            end)
+            check(ok, spec.key .. "/" .. role .. " at size " .. size ..
+                " failed to draw: " .. tostring(err))
+        end
+    end
+end
+
 if failures == 0 then
     print("all dice checks passed")
 else
