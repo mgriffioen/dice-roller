@@ -190,7 +190,7 @@ function SetupScene:draw()
     end
 
     -- Preview column -------------------------------------------------------
-    self.previewDie:draw(0)
+    self.previewDie:draw()
 
     gfx.setColor(gfx.kColorBlack)
     gfx.fillRoundRect(6, 142, 104, 22, 4)

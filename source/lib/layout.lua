@@ -9,6 +9,10 @@ local MIN_DIE <const> = 20
 -- pair, or an advantage/disadvantage pair -- has to sit side by side, so a cell
 -- is wider for those.
 --
+-- The rectangle does double duty: it is the grid the dice are read from once
+-- they stop, and it is the tray they career around inside while they are still
+-- moving.
+--
 -- Rather than hard-coding a grid per count, try every column count and keep
 -- whichever produces the largest dice. Cheap (there are at most 12 groups) and
 -- it means the layout stays sensible if the count limits ever change.
@@ -51,12 +55,15 @@ function Layout.arrange(groups, x, y, w, h)
                 -- one result rather than two.
                 local half = size * 0.86
                 group[1].size = half
-                group[1].x, group[1].y = cx - half * 0.56, cy
+                group[1]:setHome(cx - half * 0.56, cy)
                 group[2].size = half
-                group[2].x, group[2].y = cx + half * 0.56, cy
+                group[2]:setHome(cx + half * 0.56, cy)
             else
                 group[1].size = size
-                group[1].x, group[1].y = cx, cy
+                group[1]:setHome(cx, cy)
+            end
+            for _, die in ipairs(group) do
+                die:setTray(x, y, w, h)
             end
             index += 1
         end
