@@ -20,4 +20,5 @@ lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/numerals_spec.lua
 lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/dice_spec.lua
 lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/setup_spec.lua
 lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/roll_spec.lua
+lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/settings_spec.lua
 lua5.4 -e "DIR='$PWD/tests' OUT='$OUT'" tests/history_spec.lua
