@@ -86,6 +86,50 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- Physics
+-- ---------------------------------------------------------------------------
+-- A thrown die is not a spinning icon: it travels, it bounces off the walls of
+-- the tray and off the other dice, and it loses speed to the table until it
+-- stops. All of it runs in pixels-per-frame at 30fps, and all of it is tuned by
+-- eye rather than derived -- the point is that it *reads* as a real throw.
+local GRAVITY <const> = 1.0            -- vertical pull, in pixels per frame squared
+local FLOOR_BOUNCE <const> = 0.52      -- how much drop is kept on hitting the table
+local FLOOR_MIN <const> = 1.2          -- below this the die stays down instead of buzzing
+local WALL_BOUNCE <const> = 0.66
+-- Two equal masses swapping the head-on part of their velocity is a perfectly
+-- elastic bounce; scaling it by (1 + e) / 2 takes a little out of each hit.
+local DIE_BOUNCE <const> = 0.85
+local GROUND_DRAG <const> = 0.93       -- the table takes speed off a rolling die
+local AIR_DRAG <const> = 0.995         -- almost nothing, but it stops perpetual motion
+local MAX_SPEED <const> = 11
+-- The one quantity the crank must not be able to run away with. Cranking hard
+-- makes for a bigger shove, and a shove lifts the die -- without a ceiling a
+-- violent throw fires the dice clean off the top of the screen. 7 leaves an
+-- apex of about 25px, which is as high as a die needs to go to read as a hop.
+local MAX_RISE <const> = 7
+local KICK_TURN <const> = 0.9          -- radians a shove may swing the heading by
+local WALL_TURN <const> = 1.0          -- and a wall, which is hit corner-first
+local MAX_SPIN <const> = 42            -- degrees per frame
+local SPIN_PER_PIXEL <const> = 2.4     -- a die crossing the tray fast is tumbling fast
+
+-- Gathering back into the reading position. Timed by distance rather than fixed,
+-- so a die that stopped next to its slot nudges into it and one that stopped
+-- across the tray takes longer, instead of every die zipping home at whatever
+-- speed its own distance happened to work out to.
+local GLIDE_SPEED <const> = 16         -- pixels per frame
+local GLIDE_MIN <const> = 5
+local GLIDE_MAX <const> = 16
+local LAND_FRAMES <const> = 8          -- the squash once it arrives
+
+-- Rotating a regular polygon by this much leaves it looking identical, so a die
+-- can seat itself on the nearest one instead of unwinding all the way to zero:
+-- it comes to rest at a believable angle and still reads as square-on.
+local SYMMETRY <const> = {
+    tri = 120, square = 90, diamond = 90, pentagon = 72, hexagon = 60,
+    kite = 360, coin = 360,
+}
+
+-- ---------------------------------------------------------------------------
 -- Die
 -- ---------------------------------------------------------------------------
 -- `role` is "normal", or "tens"/"units" for the two halves of a d100 pair.
@@ -100,11 +144,50 @@ function Die:init(spec, role)
 
     self.value = self:randomValue()
     self.angle = math.random() * 360
-    self.spin = 0            -- degrees per frame, driven by the crank
-    self.hopPhase = math.random() * math.pi * 2
+    self.spin = 0            -- degrees per frame, signed
+
+    -- Where the layout wants this die to be read from, and the tray it is free
+    -- to career around inside until it settles.
+    self.homeX, self.homeY = self.x, self.y
+    self.trayL, self.trayT, self.trayR, self.trayB = 8, 28, 392, 192
+
+    self.vx, self.vy = 0, 0  -- across the table
+    self.z, self.zv = 0, 0   -- and above it: z is height, 0 is resting
+    self.spinBias = math.random() < 0.5 and -1 or 1
+    self.lastEnergy = 0
+    self.impacts = 0         -- collisions since the scene last looked
+
     self.settled = false
+    self.glideFrames = 0     -- counts down while gathering back into position
     self.landFrames = 0      -- counts down through the squash-and-settle bounce
     self.dropped = false     -- the loser of an advantage/disadvantage pair
+end
+
+-- The layout owns both of these: where the die is read from once it stops, and
+-- the rectangle it may roam while it is still moving.
+function Die:setHome(x, y)
+    self.homeX, self.homeY = x, y
+    self.x, self.y = x, y
+end
+
+function Die:setTray(x, y, w, h)
+    self.trayL, self.trayT = x, y
+    self.trayR, self.trayB = x + w, y + h
+end
+
+-- Back to the reading position with nothing left over, ready to be thrown again.
+function Die:rest()
+    self.x, self.y = self.homeX, self.homeY
+    self.vx, self.vy, self.z, self.zv = 0, 0, 0, 0
+    self.spin = 0
+    self.spinBias = math.random() < 0.5 and -1 or 1
+    self.lastEnergy = 0
+    self.impacts = 0
+    self.settled = false
+    self.glideFrames = 0
+    self.landFrames = 0
+    self.dropped = false
+    self.angle = math.random() * 360
 end
 
 -- Raw value in "die units": 1..sides normally, 0/10/20..90 for a tens die,
@@ -125,19 +208,159 @@ function Die:label()
     return tostring(self.value)
 end
 
+function Die:speed()
+    return math.sqrt(self.vx * self.vx + self.vy * self.vy)
+end
+
+function Die:capSpeed()
+    local s = self:speed()
+    if s > MAX_SPEED then
+        self.vx, self.vy = self.vx / s * MAX_SPEED, self.vy / s * MAX_SPEED
+    end
+end
+
+-- Turn the whole velocity without changing how fast the die is going.
+function Die:steer(radians)
+    local speed = self:speed()
+    if speed < 0.01 then return end
+    local heading = math.atan(self.vy, self.vx) + radians
+    self.vx, self.vy = math.cos(heading) * speed, math.sin(heading) * speed
+end
+
+-- One shove from the throw: faster, and pointed somewhere near but never
+-- exactly where the die was already going.
+--
+-- It has to steer rather than just add speed along the heading. A shove that
+-- only pushed forwards would be capped back to the same vector every frame, and
+-- the die would end up running on rails, bouncing between two walls in a
+-- straight line -- which is the one thing a thrown die never does.
+function Die:kick(strength)
+    local speed = self:speed()
+    local heading
+    if speed > 0.6 then
+        heading = math.atan(self.vy, self.vx) + (math.random() - 0.5) * KICK_TURN
+    else
+        heading, speed = math.random() * math.pi * 2, 0
+    end
+
+    speed = math.min(speed + strength, MAX_SPEED)
+    self.vx, self.vy = math.cos(heading) * speed, math.sin(heading) * speed
+
+    self.spin += (math.random() - 0.5) * strength * 9
+    if self.z <= 0 then
+        -- A shove only lifts a die that is on the table; one already in the air
+        -- keeps the arc it is on.
+        self.zv = math.min(math.max(self.zv, strength * 2.2 + math.random() * 2), MAX_RISE)
+    end
+end
+
+-- The walls of the tray. A die never leaves it, and every edge it clips knocks
+-- it off its line -- which is most of what keeps a long throw unpredictable.
+function Die:bounceWalls()
+    local r = self.size * 0.45
+    local left, top = self.trayL + r, self.trayT + r
+    local right, bottom = self.trayR - r, self.trayB - r
+    -- Which way the die has to be heading once it is done with the wall.
+    local awayX, awayY = 0, 0
+
+    if self.x < left then
+        self.x, self.vx, awayX = left, -self.vx * WALL_BOUNCE, 1
+    elseif self.x > right then
+        self.x, self.vx, awayX = right, -self.vx * WALL_BOUNCE, -1
+    end
+    if self.y < top then
+        self.y, self.vy, awayY = top, -self.vy * WALL_BOUNCE, 1
+    elseif self.y > bottom then
+        self.y, self.vy, awayY = bottom, -self.vy * WALL_BOUNCE, -1
+    end
+
+    if awayX == 0 and awayY == 0 then return end
+
+    -- A tumbling die clips the wall on a corner, so it comes off at an angle
+    -- rather than mirroring cleanly. Whichever component has to point away from
+    -- the wall is then put back, in case the turn was steep enough to aim the
+    -- die straight back into it.
+    self:steer((math.random() - 0.5) * WALL_TURN)
+    if awayX ~= 0 then self.vx = math.abs(self.vx) * awayX end
+    if awayY ~= 0 then self.vy = math.abs(self.vy) * awayY end
+
+    self.spin = -self.spin * 0.7
+    self.spinBias = -self.spinBias
+    if self.z <= 0 then
+        self.zv = math.max(self.zv, math.random() * 2.2)
+    end
+    self.impacts += 1
+end
+
+-- Put the die back inside the tray without bouncing it: separating a pile of
+-- dice can shove one through a wall, and a die that is merely in the wrong place
+-- should be moved, not fired off in the opposite direction.
+function Die:clampToTray()
+    local r = self.size * 0.45
+    self.x = math.max(self.trayL + r, math.min(self.trayR - r, self.x))
+    self.y = math.max(self.trayT + r, math.min(self.trayB - r, self.y))
+end
+
+-- One frame of falling, sliding and tumbling.
+function Die:integrate()
+    self.zv -= GRAVITY
+    self.z += self.zv
+
+    if self.z <= 0 then
+        self.z = 0
+        if self.zv < -FLOOR_MIN then
+            -- Still some drop left in it: bounce, and come off the table a
+            -- little further out of true than it went in.
+            self.zv = -self.zv * FLOOR_BOUNCE
+            self.spin += (math.random() - 0.5) * self.zv * 9
+            self.impacts += 1
+        else
+            self.zv = 0
+        end
+        self.vx *= GROUND_DRAG
+        self.vy *= GROUND_DRAG
+        self.spin *= GROUND_DRAG
+    else
+        self.vx *= AIR_DRAG
+        self.vy *= AIR_DRAG
+        self.spin *= AIR_DRAG
+    end
+
+    self.x += self.vx
+    self.y += self.vy
+    self:bounceWalls()
+
+    -- A die crossing the tray quickly is a die that is tumbling quickly, so the
+    -- spin never lags behind the travel however the last few hits left it.
+    local rolling = self:speed() * SPIN_PER_PIXEL
+    if math.abs(self.spin) < rolling then
+        self.spin = rolling * self.spinBias
+    end
+    self.spin = math.max(-MAX_SPIN, math.min(MAX_SPIN, self.spin))
+    self.angle = (self.angle + self.spin) % 360
+end
+
 -- energy is the shared "how hard was this thrown" number owned by the roll
 -- scene; every die reads from it so the whole handful moves together.
 function Die:update(energy)
     if self.settled then
-        if self.landFrames > 0 then
-            self.landFrames -= 1
-        end
+        self:updateLanding()
         return
     end
 
-    self.spin = energy * (2.4 + (self.hopPhase % 1) * 1.6)
-    self.angle = (self.angle + self.spin) % 360
-    self.hopPhase += 0.34
+    -- Only the energy that is *new* this frame becomes a shove, so winding the
+    -- crank keeps feeding the dice rather than pinning them at one speed, and
+    -- the moment you stop they are coasting on what they already have.
+    local gained = energy - self.lastEnergy
+    self.lastEnergy = energy
+    if gained > 0.05 then
+        self:kick(gained * 2.2 + 0.4)
+    elseif energy > 1 and self.z <= 0 and self:speed() < 0.5 then
+        -- Nothing should sit dead still while the rest of the handful is live.
+        self:kick(0.9)
+    end
+
+    self:integrate()
 
     -- Re-roll the face every few frames so the numbers blur while in motion.
     if energy > 0.6 and math.random() < 0.5 then
@@ -145,29 +368,64 @@ function Die:update(energy)
     end
 end
 
+-- The angle this die will come to rest at: the nearest orientation that leaves
+-- its silhouette looking the same as square-on, so it seats itself instead of
+-- unwinding however far it happened to have turned.
+function Die:restAngle()
+    local step = SYMMETRY[self.spec.shape] or 360
+    return math.floor(self.angle / step + 0.5) * step
+end
+
 function Die:settle(value)
     self.value = value
     self.settled = true
+    self.vx, self.vy, self.zv = 0, 0, 0
     self.spin = 0
-    self.angle = 0
-    self.landFrames = 8
+    self.fromX, self.fromY, self.fromZ = self.x, self.y, self.z
+    self.fromAngle, self.toAngle = self.angle, self:restAngle()
+
+    local dx, dy = self.homeX - self.x, self.homeY - self.y
+    local away = math.sqrt(dx * dx + dy * dy)
+    self.glideFrames = math.max(GLIDE_MIN,
+        math.min(GLIDE_MAX, math.ceil(away / GLIDE_SPEED)))
+    self.glideTotal = self.glideFrames
+    self.landFrames = 0
 end
 
--- Vertical bounce while tumbling, plus a short squash on landing.
-function Die:visualOffsets(energy)
-    local dy, squash = 0, 1
-    if not self.settled then
-        dy = -math.abs(math.sin(self.hopPhase)) * math.min(energy * 2.2, 22)
+-- A die that stopped wherever the physics left it would be honest and unreadable
+-- -- twelve of them would be a pile. So a landed die takes one short, eased
+-- slide back to the slot the layout picked for it, then squashes as it arrives.
+function Die:updateLanding()
+    if self.glideFrames > 0 then
+        self.glideFrames -= 1
+        local t = 1 - self.glideFrames / self.glideTotal
+        local e = 1 - (1 - t) * (1 - t) * (1 - t)
+        self.x = self.fromX + (self.homeX - self.fromX) * e
+        self.y = self.fromY + (self.homeY - self.fromY) * e
+        self.z = self.fromZ * (1 - e)
+        self.angle = (self.fromAngle + (self.toAngle - self.fromAngle) * e) % 360
+        if self.glideFrames == 0 then
+            self.x, self.y, self.z = self.homeX, self.homeY, 0
+            self.angle = self.toAngle % 360
+            self.landFrames = LAND_FRAMES
+        end
     elseif self.landFrames > 0 then
-        -- 8 -> 0 becomes a quick 1.25 -> 1.0 vertical squash.
-        squash = 1 - (self.landFrames / 8) * 0.25
-        dy = 0
+        self.landFrames -= 1
     end
-    return dy, squash
 end
 
-function Die:draw(energy)
-    local dy, squash = self:visualOffsets(energy)
+-- Height above the table while it is in the air, plus a short squash on landing.
+function Die:visualOffsets()
+    local squash = 1
+    if self.landFrames > 0 then
+        -- 8 -> 0 becomes a quick squeeze back out to full height.
+        squash = 1 - (self.landFrames / LAND_FRAMES) * 0.25
+    end
+    return -self.z, squash
+end
+
+function Die:draw()
+    local dy, squash = self:visualOffsets()
     local cx, cy = self.x, self.y + dy
     local r = self.size / 2
 
@@ -322,6 +580,71 @@ Dice = {}
 
 Dice.MOD_MIN = -20
 Dice.MOD_MAX = 20
+
+-- Dice bumping into each other is most of what makes a handful look chaotic
+-- rather than like a dozen dice each doing its own tidy thing. Push any
+-- overlapping pair apart, then swap the part of their velocity that lies along
+-- the line between them -- an elastic bounce between two equal masses.
+--
+-- Returns how many impacts happened this frame, walls included, so the scene
+-- can clatter in time with the collisions instead of on a timer. Dice that have
+-- already landed are out of the tray as far as this is concerned.
+function Dice.collide(dice)
+    local impacts = 0
+    for i = 1, #dice do
+        impacts += dice[i].impacts
+        dice[i].impacts = 0
+    end
+
+    for i = 1, #dice - 1 do
+        local a = dice[i]
+        if not a.settled then
+            for j = i + 1, #dice do
+                local b = dice[j]
+                if not b.settled then
+                    local dx, dy = b.x - a.x, b.y - a.y
+                    local reach = (a.size + b.size) * 0.45
+                    local sq = dx * dx + dy * dy
+                    if sq < reach * reach then
+                        local dist = math.sqrt(sq)
+                        if dist < 0.01 then
+                            -- Exactly on top of each other: any side will do.
+                            dx, dy, dist = 1, 0, 1
+                        end
+                        local nx, ny = dx / dist, dy / dist
+                        local push = (reach - dist) * 0.5
+                        a.x -= nx * push
+                        a.y -= ny * push
+                        b.x += nx * push
+                        b.y += ny * push
+                        a:clampToTray()
+                        b:clampToTray()
+
+                        -- Only closing dice bounce; two that already overlap and
+                        -- are separating just need the shove above.
+                        local closing = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny
+                        if closing < 0 then
+                            local p = closing * DIE_BOUNCE
+                            a.vx += p * nx
+                            a.vy += p * ny
+                            b.vx -= p * nx
+                            b.vy -= p * ny
+                            a.spin = -a.spin * 0.6 + closing * 2.5
+                            b.spin = -b.spin * 0.6 - closing * 2.5
+                            if a.z <= 0 then a.zv = math.max(a.zv, -closing * 0.35) end
+                            if b.z <= 0 then b.zv = math.max(b.zv, -closing * 0.35) end
+                            a:capSpeed()
+                            b:capSpeed()
+                            impacts += 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return impacts
+end
 
 function Dice.newConfig()
     return { spec = DiceTypes[3], count = 1, modifier = 0, mode = "normal" }

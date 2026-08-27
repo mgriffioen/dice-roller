@@ -109,6 +109,108 @@ for _, spec in ipairs(DiceTypes) do
     end
 end
 
+-- The throw is a throw: the dice travel, they stay in the tray while they do
+-- it, and they are back in their reading positions before the overlay is up.
+-- Without this, "rolling" quietly degrades to spinning on the spot again.
+local PLAY = { left = 8, top = 28, right = 392, bottom = 192 }
+
+local function watchedThrow(c, rate)
+    RollScene:enter(c)
+    Input.docked = false
+    Input.crank = rate or 22
+    Input.held = {}
+
+    local travel, prev = {}, {}
+    for i, d in ipairs(RollScene.dice) do
+        travel[i] = 0
+        prev[i] = { d.x, d.y }
+    end
+
+    local frames, strayed, sank, highest = 0, 0, 0, 0
+    while RollScene.state ~= "result" and frames < 600 do
+        if RollScene.cranked >= 540 then Input.crank = 0 end
+        RollScene:update()
+        frames = frames + 1
+        for i, d in ipairs(RollScene.dice) do
+            local dx, dy = d.x - prev[i][1], d.y - prev[i][2]
+            travel[i] = travel[i] + math.sqrt(dx * dx + dy * dy)
+            prev[i] = { d.x, d.y }
+            -- The physics keeps a die's centre inside the tray, and its height
+            -- above the table is never negative.
+            local r = d.size * 0.45
+            if d.x < PLAY.left + r - 0.01 or d.x > PLAY.right - r + 0.01 or
+               d.y < PLAY.top + r - 0.01 or d.y > PLAY.bottom - r + 0.01 then
+                strayed = strayed + 1
+            end
+            if d.z < 0 then sank = sank + 1 end
+            highest = math.max(highest, d.z)
+        end
+    end
+    return travel, frames, strayed, sank, highest
+end
+
+for _, c in ipairs({
+    config(DiceTypes[3], 1), config(DiceTypes[3], 6), config(d20base, 12),
+    config(DiceTypes[8], 6), config(d20base, 12, 0, "advantage"),
+}) do
+    local name = Dice.notation(c)
+    local travel, frames, strayed, sank, highest = watchedThrow(c)
+
+    check(strayed == 0, name .. ": a die left the tray on " .. strayed .. " frames")
+    check(sank == 0, name .. ": a die went below the table on " .. sank .. " frames")
+    check(highest > 6, name .. ": the dice never left the table -- no bounce")
+
+    local least = math.huge
+    for _, distance in ipairs(travel) do least = math.min(least, distance) end
+    -- The tray is 384x164. A die that only jiggled would manage a few dozen
+    -- pixels; one that was actually thrown crosses it more than once.
+    check(least > 120, name .. ": the least-travelled die covered only " ..
+        string.format("%.0f", least) .. "px -- the dice are not really rolling")
+
+    -- No two dice may follow the same path, or a handful reads as one object.
+    if #travel > 1 then
+        local same = 0
+        for i = 2, #travel do
+            if math.abs(travel[i] - travel[1]) < 0.5 then same = same + 1 end
+        end
+        check(same == 0, name .. ": " .. same .. " dice travelled in lockstep")
+    end
+
+    -- Run the gather and the landing squash out, then everything is home,
+    -- flat on the table and seated square.
+    for _ = 1, 40 do RollScene:update() end
+    for _, d in ipairs(RollScene.dice) do
+        check(math.abs(d.x - d.homeX) < 0.01 and math.abs(d.y - d.homeY) < 0.01,
+            name .. ": a die stopped away from its reading position")
+        check(d.z == 0 and d.zv == 0, name .. ": a die is still in the air")
+        check(d.vx == 0 and d.vy == 0 and d.spin == 0,
+            name .. ": a settled die is still moving")
+        check(d.landFrames == 0 and d.glideFrames == 0,
+            name .. ": a settled die never finished landing")
+    end
+end
+
+-- However hard the crank is turned, the dice stay on the table. Cranking harder
+-- means a bigger shove and a shove lifts the die, so without a ceiling on the
+-- hop a violent throw fires the whole handful off the top of the screen.
+for _, rate in ipairs({ 22, 60, 120, 400 }) do
+    local _, _, strayed, _, highest = watchedThrow(config(d20base, 3), rate)
+    check(highest < 32, "cranking at " .. rate ..
+        " deg/frame threw the dice " .. string.format("%.0f", highest) ..
+        "px into the air -- off the top of the screen")
+    check(strayed == 0, "cranking at " .. rate .. " threw a die out of the tray")
+end
+
+-- A fresh throw starts from the reading positions again, not from wherever the
+-- last one happened to end.
+RollScene:enter(config(d20base, 4))
+watchedThrow(config(d20base, 4))
+RollScene:reset()
+for _, d in ipairs(RollScene.dice) do
+    check(d.x == d.homeX and d.y == d.homeY and d.z == 0 and not d.settled,
+        "reset should put the dice back where the layout wants them")
+end
+
 -- Advantage really does bias the result upwards.
 local function meanTotal(c, n)
     local sum = 0

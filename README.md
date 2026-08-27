@@ -2,8 +2,9 @@
 
 A D&D/RPG dice roller for the [Playdate](https://play.date/). Set up the throw --
 die type, how many, a `+N` modifier, and advantage or disadvantage on a d20 --
-then turn the crank. The dice tumble, land one by one, and the total slides up
-on an overlay. Past rolls are kept on a second page, and any of them can be
+then turn the crank. The dice scatter across the tray, bouncing off the walls and
+off each other until the throw runs out of steam, then land one by one and the
+total slides up on an overlay. Past rolls are kept on a second page, and any of them can be
 thrown again.
 
 Written in Lua against the Playdate SDK, with comments aimed at someone learning
@@ -110,6 +111,47 @@ A d100 isn't one die — it's a pair of d10s: a *tens* die reading `00`–`90` a
 app rolls and animates both dice, shows them side by side, and displays each
 result as `70+3=73`.
 
+## How a throw moves
+
+Cranking does not spin the dice on the spot: it throws them. Each die carries a
+velocity across the tray and a height above it, and every frame it falls under
+gravity, bounces when it hits the table, loses speed to friction, and reflects
+off the walls of the play area. Dice that run into each other are pushed apart
+and swap the head-on part of their velocity, which is an elastic bounce between
+two equal masses. Between them, those two rules are what make a handful of dice
+look like a handful of dice rather than a dozen identical animations.
+
+Three details are worth calling out, because each one fixes something that
+looked wrong before it was there:
+
+- **A shove steers as well as pushes.** The crank feeds the dice a kick every
+  frame it is turning, aimed near — but never exactly at — the way the die is
+  already going. It has to turn the whole velocity rather than just add speed
+  along the heading: a kick that only pushed forwards gets clamped back to the
+  same vector every frame, and the die ends up running on rails, bouncing
+  between two walls in a straight line. Turning the heading is what makes the
+  path wander.
+- **A die seats itself on the nearest matching angle.** A regular polygon looks
+  identical rotated by `360 / sides`, so a landing die turns to the nearest one
+  instead of unwinding all the way back to zero. It comes to rest at a
+  believable angle, and gets there in a few frames rather than a spin-down.
+- **Then it gathers.** A die that stopped wherever the physics left it would be
+  honest and unreadable — twelve of them would be a pile — so a landed die
+  takes one short eased slide back into the slot the layout picked for it.
+  The slide is timed by distance, so a die that stopped next to its slot nudges
+  into it while one that stopped across the tray takes longer, rather than every
+  die zipping home at whatever speed its own distance worked out to.
+
+The constants at the top of the physics section in `source/lib/dice.lua` —
+gravity, the two restitutions, the drags, the speed and spin caps, how far a
+shove or a wall may swing the heading — are all tuned by eye. The point is that
+it *reads* as a real throw, not that it is a correct simulation.
+
+The clatter follows from this rather than from a timer: `Dice.collide` returns
+how many impacts happened that frame, walls included, and the roll scene plays a
+blip when there were any (at most one every few frames). What you hear is what
+you can see happening.
+
 ## Two drawing flags
 
 `source/lib/dice.lua` opens with a pair of constants, both on by default:
@@ -140,7 +182,8 @@ source/
   pdxinfo             game metadata (name, bundle ID, version) that pdc bakes in
   lib/
     dice.lua          dice types, shapes, scoring a throw, and the Die class
-    layout.lua        fits N dice into a rectangle at the largest size that works
+    layout.lua        fits N dice into a rectangle at the largest size that works,
+                      which doubles as the tray they career around inside
     util.lua          drawing helpers: panels, bars, screen dimming
     numerals.lua      digits drawn as stroke paths, so they fit at any size
     sfx.lua           synth blips -- no audio files needed
@@ -264,6 +307,13 @@ Lua 5.4, stubs the handful of `playdate.*` calls the logic touches, and checks:
   always gets a bigger number, and the setup preview does not jump size as you
   scroll the die list
 - the layout solver keeps every die on screen at every supported count
+- the throw is really a throw: every die travels a good fraction of the tray, no
+  two dice move in lockstep, no die ever leaves the tray or sinks below the
+  table, and every one of them is back in its reading position, flat and still,
+  by the time the overlay is up
+- dice that overlap are pushed apart, dice meeting head-on bounce apart, dice
+  already moving apart are not bounced a second time, and a landed die does not
+  shove the ones still in the air
 - every die type draws without error at every size, mid-tumble at a range of
   angles, landing, at rest, and crossed out — which is what catches a shape
   added without the matching facet geometry

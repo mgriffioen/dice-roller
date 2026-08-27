@@ -182,7 +182,53 @@ for _, spec in ipairs(DiceTypes) do
     end
 end
 
--- 7. The number on a die's face stays on the die --------------------------
+-- 7. Dice bouncing off each other ------------------------------------------
+local phys = config(DiceTypes[3], 2)
+local pall, pgroups = Dice.build(phys)
+Layout.arrange(pgroups, 8, 28, 384, 164)
+local a, b = pall[1], pall[2]
+local reach = (a.size + b.size) * 0.45
+
+local function place(ax, bx, avx, bvx)
+    a.x, a.y, a.vx, a.vy, a.settled = ax, 110, avx, 0, false
+    b.x, b.y, b.vx, b.vy, b.settled = bx, 110, bvx, 0, false
+end
+
+-- Two dice in the same place have no line between them to be pushed along, so
+-- this is the case that would divide by zero if it were not handled.
+place(200, 200, 0, 0)
+Dice.collide(pall)
+check(math.abs(a.x - b.x) > 0, "two dice in the same spot must be pushed apart")
+
+-- Overlapping dice are separated, however they are moving.
+place(200, 215, 0, 0)
+Dice.collide(pall)
+check(math.abs(a.x - b.x) > reach - 0.01,
+    "overlapping dice were left " .. string.format("%.1f", math.abs(a.x - b.x)) ..
+    "px apart, want " .. string.format("%.1f", reach))
+
+-- Head on: two equal masses swap the part of their velocity along the line
+-- between them, so they leave going away from each other rather than through.
+place(200, 215, 6, -6)
+local impacts = Dice.collide(pall)
+check(a.vx < 0 and b.vx > 0, "dice meeting head-on should bounce apart, got " ..
+    string.format("%.1f / %.1f", a.vx, b.vx))
+check(impacts >= 1, "a head-on collision should be reported as an impact")
+
+-- Already moving apart: the overlap still needs undoing, but bouncing them a
+-- second time would suck them back together.
+place(200, 215, -5, 5)
+Dice.collide(pall)
+check(a.vx == -5 and b.vx == 5, "dice already moving apart must not be bounced again")
+
+-- A die that has landed is out of the way of the ones still in the air.
+place(200, 200, 0, 0)
+a.settled = true
+Dice.collide(pall)
+check(b.x == 200 and b.vx == 0, "a settled die should not shove the others around")
+a.settled = false
+
+-- 8. The number on a die's face stays on the die --------------------------
 local biggest = 0
 for _, spec in ipairs(DiceTypes) do
     for _, mode in ipairs({ "normal", "advantage" }) do

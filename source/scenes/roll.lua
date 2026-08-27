@@ -12,6 +12,9 @@ local CRANK_TARGET <const> = 540
 local SETTLE_GAP <const> = 4     -- frames between one die landing and the next
 local REVEAL_DELAY <const> = 14  -- frames between the last die and the overlay
 local OVERLAY_FRAMES <const> = 10
+local CLATTER_GAP <const> = 3    -- frames between clatters, however many dice hit
+
+local PLAY_BOTTOM <const> = 197  -- the dice are clipped off just above the meter
 
 local PANEL_X <const>, PANEL_W <const> = 24, 352
 local PANEL_Y <const>, PANEL_H <const> = 40, 168
@@ -42,11 +45,9 @@ function RollScene:reset()
     self.overlayFrames = 0
     self.result = nil
     self.hintAngle = 0
+    self.clatterFrame = -CLATTER_GAP
     for _, die in ipairs(self.dice) do
-        die.settled = false
-        die.dropped = false
-        die.landFrames = 0
-        die.angle = math.random() * 360
+        die:rest()
     end
     for _, group in ipairs(self.groups) do
         group.marked = false
@@ -77,6 +78,15 @@ function RollScene:update()
         die:update(self.energy)
     end
 
+    -- Dice hitting each other and the walls of the tray, and the sound of it.
+    -- Driving the clatter off real impacts rather than off a timer is what ties
+    -- what you hear to what you can see happening.
+    local impacts = Dice.collide(self.dice)
+    if impacts > 0 and self.frame - self.clatterFrame >= CLATTER_GAP then
+        self.clatterFrame = self.frame
+        Sfx.tumble()
+    end
+
     self:draw()
 end
 
@@ -102,10 +112,6 @@ function RollScene:updateThrow()
 
     -- Energy bleeds away every frame, so the dice slow down the moment you stop.
     self.energy *= 0.93
-
-    if self.energy > 2 and self.frame % 4 == 0 then
-        Sfx.tumble()
-    end
 
     if self.state == "tumbling" and self.cranked >= CRANK_TARGET and self.energy < 1.5 then
         self.state = "settling"
@@ -197,9 +203,13 @@ function RollScene:draw()
     Util.drawInvertedText(Dice.notation(self.config), 8, 4)
     Util.drawInvertedText("B: change dice", 392, 4, kTextAlignment.right)
 
+    -- Clipped to the play area: a die that hops high near the back of the tray
+    -- passes behind the header rather than over the top of it.
+    gfx.setClipRect(0, 24, 400, PLAY_BOTTOM - 24)
     for _, die in ipairs(self.dice) do
-        die:draw(self.energy)
+        die:draw()
     end
+    gfx.clearClipRect()
 
     if self.state == "result" then
         self:drawOverlay()
