@@ -19,6 +19,7 @@ import "lib/numerals"
 import "lib/dice"
 import "lib/layout"
 import "lib/sfx"
+import "lib/settings"
 import "lib/history"
 import "scenes/setup"
 import "scenes/roll"
@@ -47,11 +48,23 @@ local function bootstrap()
     gfx.setFont(gfx.getSystemFont())
 
     Sfx.init()
+    Settings.load()
     History.load()
 
+    -- Whichever way the dice were last thrown, that is how they are thrown now.
+    -- setStyle ignores anything it does not recognise, so a settings file from
+    -- another version cannot leave the dice in a style nothing can draw.
+    Dice.setStyle(Settings.get("rollStyle", Dice.SCATTER))
+
+    -- Three is the most the system menu takes, and this is the third. Anything
+    -- else that wants to be configurable from here will have to displace one of
+    -- them or move onto the setup screen as a field.
     local menu = playdate.getSystemMenu()
     menu:addCheckmarkMenuItem("sound", true, function(on)
         Sfx.enabled = on
+    end)
+    menu:addOptionsMenuItem("roll", Dice.STYLES, Dice.style, function(style)
+        Settings.set("rollStyle", Dice.setStyle(style))
     end)
     menu:addMenuItem("clear history", function()
         History.clear()

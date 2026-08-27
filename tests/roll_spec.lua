@@ -111,7 +111,10 @@ end
 
 -- The throw is a throw: the dice travel, they stay in the tray while they do
 -- it, and they are back in their reading positions before the overlay is up.
--- Without this, "rolling" quietly degrades to spinning on the spot again.
+-- Without this, "rolling" quietly degrades to spinning on the spot again --
+-- which is a real style now, so these say which one they are about.
+Dice.setStyle(Dice.SCATTER)
+
 local PLAY = { left = 8, top = 28, right = 392, bottom = 192 }
 
 local function watchedThrow(c, rate)
@@ -209,6 +212,78 @@ RollScene:reset()
 for _, d in ipairs(RollScene.dice) do
     check(d.x == d.homeX and d.y == d.homeY and d.z == 0 and not d.settled,
         "reset should put the dice back where the layout wants them")
+end
+
+-- The "in place" style, which is the other half of the menu toggle: the dice
+-- hold their reading positions and hop on the spot instead of being thrown.
+Dice.setStyle(Dice.IN_PLACE)
+
+do
+    local c = config(d20base, 6)
+    RollScene:enter(c)
+    Input.docked = false
+    Input.crank = 22
+    Input.held = {}
+
+    local home = {}
+    for i, d in ipairs(RollScene.dice) do home[i] = { d.x, d.y } end
+
+    -- The clatter is driven by the impact count in both styles, so a die that
+    -- never reports touching down is a die that rolls in silence.
+    local clatters = 0
+    Sfx.tumble = function() clatters = clatters + 1 end
+
+    local moved, hopped, spun, frames = 0, 0, 0, 0
+    local turned = {}
+    for i, d in ipairs(RollScene.dice) do turned[i] = d.angle end
+
+    while RollScene.state ~= "result" and frames < 600 do
+        if RollScene.cranked >= 540 then Input.crank = 0 end
+        RollScene:update()
+        frames = frames + 1
+        for i, d in ipairs(RollScene.dice) do
+            -- Until it lands, a die in this style never leaves its slot.
+            if not d.settled and (d.x ~= home[i][1] or d.y ~= home[i][2]) then
+                moved = moved + 1
+            end
+            if d.z > 1 then hopped = hopped + 1 end
+            if d.angle ~= turned[i] then spun = spun + 1 end
+            turned[i] = d.angle
+        end
+    end
+
+    check(moved == 0, "in place: a die wandered off its slot on " .. moved .. " frames")
+    check(hopped > 0, "in place: the dice never left the table -- no bounce")
+    check(spun > 0, "in place: the dice never turned")
+    check(clatters > 0, "in place: the dice rolled in silence")
+    check(RollScene.state == "result", "in place: the throw never reached a result")
+
+    for _ = 1, 40 do RollScene:update() end
+    for i, d in ipairs(RollScene.dice) do
+        check(d.x == home[i][1] and d.y == home[i][2],
+            "in place: a die did not finish where it started")
+        check(d.z == 0 and d.landFrames == 0 and d.glideFrames == 0,
+            "in place: a die never finished landing")
+    end
+
+    local lo, hi = Dice.range(c)
+    check(RollScene.result.total >= lo and RollScene.result.total <= hi,
+        "in place: total outside " .. lo .. ".." .. hi)
+end
+
+Sfx = setmetatable({}, { __index = function() return noop end })
+
+-- Switching styles between throws takes effect on the next throw, with no
+-- leftover velocity from the last one.
+Dice.setStyle(Dice.SCATTER)
+do
+    local c = config(d20base, 4)
+    local travel = watchedThrow(c)
+    local least = math.huge
+    for _, distance in ipairs(travel) do least = math.min(least, distance) end
+    check(least > 120,
+        "switching back to scatter should throw the dice again, got " ..
+        string.format("%.0f", least) .. "px")
 end
 
 -- Advantage really does bias the result upwards.
