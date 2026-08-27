@@ -64,8 +64,16 @@ switch to another die.
 | A | Throw the selected roll again |
 | B | Back to the setup screen |
 
-Sound can be turned off from the Playdate system menu, and the history cleared
-from there too.
+## The system menu
+
+Press the menu button for the three settings, which is as many as the Playdate
+system menu takes:
+
+| Item | Values | |
+| --- | --- | --- |
+| `sound` | on / off | Resets to on each launch |
+| `roll` | `scatter` / `in place` | How the dice move — see below. Remembered between launches |
+| `clear history` | | Throws away the last 20 rolls |
 
 ## Modifiers, advantage and disadvantage
 
@@ -113,6 +121,18 @@ result as `70+3=73`.
 
 ## How a throw moves
 
+There are two styles, on the `roll` item in the system menu. The choice is kept
+in `settings` next to the history, so it survives a relaunch.
+
+**`in place`** is the original animation: every die holds the position the
+layout gave it and spins on the spot, hopping up and down on a sine wave. Spin
+and hop are both read straight off the shared crank energy, so the whole handful
+moves as one. It is the cheaper of the two — no collision pass and no square
+roots per die per frame — and the easier to read, because every die stays
+exactly where you last looked for it.
+
+**`scatter`** is the default, and the rest of this section.
+
 Cranking does not spin the dice on the spot: it throws them. Each die carries a
 velocity across the tray and a height above it, and every frame it falls under
 gravity, bounces when it hits the table, loses speed to friction, and reflects
@@ -150,7 +170,16 @@ it *reads* as a real throw, not that it is a correct simulation.
 The clatter follows from this rather than from a timer: `Dice.collide` returns
 how many impacts happened that frame, walls included, and the roll scene plays a
 blip when there were any (at most one every few frames). What you hear is what
-you can see happening.
+you can see happening. `in place` feeds the same counter — a die reports an
+impact each time its sine crosses zero, which is the moment it touches down —
+so one rule covers the clatter in both styles.
+
+The two styles meet again at the landing: whichever way a die was moving, it
+seats itself on the nearest same-looking angle and eases down onto the table
+over a few frames. In `in place` that replaces the original's instant snap
+upright. The resting pose is identical either way — a regular polygon turned by
+a multiple of `360 / sides` draws exactly as it would at zero — so what changed
+is the few frames getting there, not where it ends up.
 
 ## Two drawing flags
 
@@ -187,6 +216,7 @@ source/
     util.lua          drawing helpers: panels, bars, screen dimming
     numerals.lua      digits drawn as stroke paths, so they fit at any size
     sfx.lua           synth blips -- no audio files needed
+    settings.lua      preferences that outlive a launch, saved the same way
     history.lua       the last 20 rolls, saved with playdate.datastore
   scenes/
     setup.lua         the field list: die type, count, modifier, advantage
@@ -314,6 +344,12 @@ Lua 5.4, stubs the handful of `playdate.*` calls the logic touches, and checks:
 - dice that overlap are pushed apart, dice meeting head-on bounce apart, dice
   already moving apart are not bounced a second time, and a landed die does not
   shove the ones still in the air
+- the `in place` style really does hold every die on its slot while still
+  hopping, spinning, clattering and reaching a valid total, and switching styles
+  between throws takes effect on the next one
+- settings survive a reload, are not disturbed by writes to the history, fall
+  back to the defaults when the file is corrupt or from a future version, and
+  every style the menu offers is one the game will accept
 - every die type draws without error at every size, mid-tumble at a range of
   angles, landing, at rest, and crossed out — which is what catches a shape
   added without the matching facet geometry

@@ -86,12 +86,49 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- Two ways to throw
+-- ---------------------------------------------------------------------------
+-- These are the strings the system menu shows, so the menu can hand its choice
+-- straight back without a lookup table in between.
+--
+--   scatter   the dice are thrown: they travel across the tray, bounce off the
+--             walls and off each other, and gather back into their reading
+--             positions once they land
+--   in place  the dice hold their positions and spin on the spot, hopping up
+--             and down on a sine wave. Cheaper -- no collision pass, no square
+--             roots -- and easier to read at a glance, because every die stays
+--             where you last looked for it
+Dice = {}
+
+Dice.SCATTER = "scatter"
+Dice.IN_PLACE = "in place"
+Dice.STYLES = { Dice.SCATTER, Dice.IN_PLACE }
+
+Dice.style = Dice.SCATTER
+
+-- Anything that is not one of the two is ignored, so a hand-edited settings
+-- file or a key left over from an older version cannot leave the dice in a
+-- style that nothing knows how to draw. Returns the style actually in force.
+function Dice.setStyle(style)
+    for _, known in ipairs(Dice.STYLES) do
+        if style == known then
+            Dice.style = style
+            break
+        end
+    end
+    return Dice.style
+end
+
+-- ---------------------------------------------------------------------------
 -- Physics
 -- ---------------------------------------------------------------------------
 -- A thrown die is not a spinning icon: it travels, it bounces off the walls of
 -- the tray and off the other dice, and it loses speed to the table until it
 -- stops. All of it runs in pixels-per-frame at 30fps, and all of it is tuned by
 -- eye rather than derived -- the point is that it *reads* as a real throw.
+--
+-- None of it runs in the "in place" style, which is the handful of lines in
+-- Die:spinInPlace instead.
 local GRAVITY <const> = 1.0            -- vertical pull, in pixels per frame squared
 local FLOOR_BOUNCE <const> = 0.52      -- how much drop is kept on hitting the table
 local FLOOR_MIN <const> = 1.2          -- below this the die stays down instead of buzzing
@@ -154,6 +191,7 @@ function Die:init(spec, role)
     self.vx, self.vy = 0, 0  -- across the table
     self.z, self.zv = 0, 0   -- and above it: z is height, 0 is resting
     self.spinBias = math.random() < 0.5 and -1 or 1
+    self.hopPhase = math.random() * math.pi * 2   -- the "in place" style's bounce
     self.lastEnergy = 0
     self.impacts = 0         -- collisions since the scene last looked
 
@@ -181,6 +219,7 @@ function Die:rest()
     self.vx, self.vy, self.z, self.zv = 0, 0, 0, 0
     self.spin = 0
     self.spinBias = math.random() < 0.5 and -1 or 1
+    self.hopPhase = math.random() * math.pi * 2
     self.lastEnergy = 0
     self.impacts = 0
     self.settled = false
@@ -340,17 +379,10 @@ function Die:integrate()
     self.angle = (self.angle + self.spin) % 360
 end
 
--- energy is the shared "how hard was this thrown" number owned by the roll
--- scene; every die reads from it so the whole handful moves together.
-function Die:update(energy)
-    if self.settled then
-        self:updateLanding()
-        return
-    end
-
-    -- Only the energy that is *new* this frame becomes a shove, so winding the
-    -- crank keeps feeding the dice rather than pinning them at one speed, and
-    -- the moment you stop they are coasting on what they already have.
+-- The thrown style. Only the energy that is *new* this frame becomes a shove,
+-- so winding the crank keeps feeding the dice rather than pinning them at one
+-- speed, and the moment you stop they are coasting on what they already have.
+function Die:throwAround(energy)
     local gained = energy - self.lastEnergy
     self.lastEnergy = energy
     if gained > 0.05 then
@@ -359,8 +391,45 @@ function Die:update(energy)
         -- Nothing should sit dead still while the rest of the handful is live.
         self:kick(0.9)
     end
-
     self:integrate()
+end
+
+-- The "in place" style: the die holds its reading position and spins on the
+-- spot, hopping up and down. Spin and hop are both read straight off the shared
+-- energy, which is what makes the whole handful move as one -- the opposite of
+-- what the thrown style is for, and the reason the two look so different.
+function Die:spinInPlace(energy)
+    self.spin = energy * (2.4 + (self.hopPhase % 1) * 1.6)
+    self.angle = (self.angle + self.spin) % 360
+
+    local was = self.hopPhase
+    self.hopPhase += 0.34
+
+    -- Height off a sine rather than out of gravity, which is exactly why the
+    -- hop is even and repetitive instead of a bounce that decays.
+    self.z = math.abs(math.sin(self.hopPhase)) * math.min(energy * 2.2, 22)
+
+    -- The die touches down every time the sine crosses zero. Reporting that as
+    -- an impact means the clatter is timed off the hops in this style just as
+    -- it is timed off real collisions in the other one.
+    if energy > 1 and math.floor(was / math.pi) ~= math.floor(self.hopPhase / math.pi) then
+        self.impacts += 1
+    end
+end
+
+-- energy is the shared "how hard was this thrown" number owned by the roll
+-- scene; every die reads from it so the whole handful moves together.
+function Die:update(energy)
+    if self.settled then
+        self:updateLanding()
+        return
+    end
+
+    if Dice.style == Dice.IN_PLACE then
+        self:spinInPlace(energy)
+    else
+        self:throwAround(energy)
+    end
 
     -- Re-roll the face every few frames so the numbers blur while in motion.
     if energy > 0.6 and math.random() < 0.5 then
@@ -568,19 +637,8 @@ function Die:drawFace(cx, cy)
 end
 
 -- ---------------------------------------------------------------------------
--- Building and scoring a handful of dice
+-- A handful of dice at once
 -- ---------------------------------------------------------------------------
--- Everything below takes a `config`: the whole description of one throw.
---
---   { spec = <entry from DiceTypes>, count = 3, modifier = 2, mode = "normal" }
---
--- `mode` is "normal", "advantage" or "disadvantage", and only means anything
--- for a die type flagged allowAdvantage (the d20).
-Dice = {}
-
-Dice.MOD_MIN = -20
-Dice.MOD_MAX = 20
-
 -- Dice bumping into each other is most of what makes a handful look chaotic
 -- rather than like a dozen dice each doing its own tidy thing. Push any
 -- overlapping pair apart, then swap the part of their velocity that lies along
@@ -594,6 +652,12 @@ function Dice.collide(dice)
     for i = 1, #dice do
         impacts += dice[i].impacts
         dice[i].impacts = 0
+    end
+
+    -- Dice that hold their positions can never run into each other, so the
+    -- "in place" style skips the whole pass and keeps its lower cost.
+    if Dice.style == Dice.IN_PLACE then
+        return impacts
     end
 
     for i = 1, #dice - 1 do
@@ -645,6 +709,18 @@ function Dice.collide(dice)
 
     return impacts
 end
+
+-- ---------------------------------------------------------------------------
+-- Building and scoring a handful of dice
+-- ---------------------------------------------------------------------------
+-- Everything below takes a `config`: the whole description of one throw.
+--
+--   { spec = <entry from DiceTypes>, count = 3, modifier = 2, mode = "normal" }
+--
+-- `mode` is "normal", "advantage" or "disadvantage", and only means anything
+-- for a die type flagged allowAdvantage (the d20).
+Dice.MOD_MIN = -20
+Dice.MOD_MAX = 20
 
 function Dice.newConfig()
     return { spec = DiceTypes[3], count = 1, modifier = 0, mode = "normal" }
